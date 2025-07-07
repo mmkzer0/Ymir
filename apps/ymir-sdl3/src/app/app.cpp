@@ -108,6 +108,7 @@
 #include <backends/imgui_impl_sdlrenderer3.h>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <cereal/archives/binary.hpp>
 #include <cereal/archives/portable_binary.hpp>
@@ -131,6 +132,65 @@ CMRC_DECLARE(Ymir_sdl3_rc);
 
 using clk = std::chrono::steady_clock;
 using MidiPortType = app::Settings::Audio::MidiPort::Type;
+
+namespace ImGui {
+
+bool BeginMainStatusBar() {
+    ImGuiContext &g = *GetCurrentContext();
+    ImGuiViewportP *viewport = (ImGuiViewportP *)(void *)GetMainViewport();
+
+    // Notify of viewport change so GetFrameHeight() can be accurate in case of DPI change
+    SetCurrentViewport(NULL, viewport);
+
+    // For the main menu bar, which cannot be moved, we honor g.Style.DisplaySafeAreaPadding to ensure text can be
+    // visible on a TV set.
+    // FIXME: This could be generalized as an opt-in way to clamp window->DC.CursorStartPos to avoid SafeArea?
+    // FIXME: Consider removing support for safe area down the line... it's messy. Nowadays consoles have support for TV
+    // calibration in OS settings.
+    g.NextWindowData.MenuBarOffsetMinVal = ImVec2(
+        g.Style.DisplaySafeAreaPadding.x, ImMax(g.Style.DisplaySafeAreaPadding.y - g.Style.FramePadding.y, 0.0f));
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
+    float height = GetFrameHeight();
+    bool is_open = BeginViewportSideBar("##MainStatusBar", viewport, ImGuiDir_Down, height, window_flags);
+    g.NextWindowData.MenuBarOffsetMinVal = ImVec2(0.0f, 0.0f);
+
+    if (!is_open) {
+        End();
+        return false;
+    }
+
+    // Temporarily disable _NoSavedSettings, in the off-chance that tables or child windows submitted within the
+    // menu-bar may want to use settings. (#8356)
+    g.CurrentWindow->Flags &= ~ImGuiWindowFlags_NoSavedSettings;
+    BeginMenuBar();
+    return is_open;
+}
+
+void EndMainStatusBar() {
+    ImGuiContext &g = *GImGui;
+    if (!g.CurrentWindow->DC.MenuBarAppending) {
+        IM_ASSERT_USER_ERROR(
+            0,
+            "Calling EndMainStatusBar() not from a menu-bar!"); // Not technically testing that it is the main menu bar
+        return;
+    }
+
+    EndMenuBar();
+    g.CurrentWindow->Flags |= ImGuiWindowFlags_NoSavedSettings; // Restore _NoSavedSettings (#8356)
+
+    // When the user has left the menu layer (typically: closed menus through activation of an item), we restore focus
+    // to the previous window
+    // FIXME: With this strategy we won't be able to restore a NULL focus.
+    if (g.CurrentWindow == g.NavWindow && g.NavLayer == ImGuiNavLayer_Main && !g.NavAnyRequest && g.ActiveId == 0)
+        FocusTopMostWindowUnderOne(g.NavWindow, NULL, NULL,
+                                   ImGuiFocusRequestFlags_UnlessBelowModal |
+                                       ImGuiFocusRequestFlags_RestoreFocusedChild);
+
+    End();
+}
+
+} // namespace ImGui
 
 namespace app {
 
@@ -513,7 +573,7 @@ void App::RunEmulator() {
         SDL_SetBooleanProperty(windowProps, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
         SDL_SetBooleanProperty(windowProps, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, scaledWidth);
-        SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, scaledHeight + menuBarHeight);
+        SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, scaledHeight + menuBarHeight * 2.0f);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
         SDL_SetNumberProperty(windowProps, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, true);
@@ -1651,6 +1711,8 @@ void App::RunEmulator() {
 
         auto *viewport = ImGui::GetMainViewport();
 
+        const bool anyItemFocused = io.NavActive || ImGui::IsAnyItemFocused();
+
         const bool drawMainMenu = [&] {
             // Always draw main menu bar in windowed mode
             if (!fullScreen) {
@@ -1660,7 +1722,7 @@ void App::RunEmulator() {
             // -- Full screen mode --
 
             // Always show main menu bar if some ImGui element is focused
-            if (io.NavActive || ImGui::IsAnyItemFocused()) {
+            if (anyItemFocused) {
                 return true;
             }
 
@@ -1675,6 +1737,33 @@ void App::RunEmulator() {
 
             // Show menu bar if mouse is in the top quarter of the screen (minimum of 120 scaled pixels) and visible
             return mousePosY <= vpTopQuarter;
+        }();
+
+        const bool drawStatusBar = [&] {
+            // Always draw status bar in windowed mode
+            if (!fullScreen) {
+                return true;
+            }
+
+            // -- Full screen mode --
+
+            // Always show status bar if some ImGui element is focused
+            if (anyItemFocused) {
+                return true;
+            }
+
+            // Hide status bar if mouse is hidden
+            if (hideMouse) {
+                return false;
+            }
+
+            const float mousePosY = io.MousePos.y;
+            const float vpBottomQuarter =
+                viewport->Pos.y +
+                std::min(viewport->Size.y * 0.75f, viewport->Size.y - 120.0f * m_context.displayScale);
+
+            // Show menu bar if mouse is in the bottom quarter of the screen (minimum of 120 scaled pixels) and visible
+            return mousePosY >= vpBottomQuarter;
         }();
 
         if (drawMainMenu) {
@@ -2050,6 +2139,34 @@ void App::RunEmulator() {
             }
         }
 
+        if (drawStatusBar) {
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            if (ImGui::BeginMainStatusBar()) {
+                ImGui::PopStyleVar();
+                std::unique_lock lock{m_context.locks.peripherals};
+
+                auto displayPort = [&](int portNum, const ymir::peripheral::PeripheralPort &port) {
+                    switch (port.GetPeripheral().GetType()) {
+                    case ymir::peripheral::PeripheralType::None: ImGui::Text("Port %d: None", portNum); break;
+                    case ymir::peripheral::PeripheralType::ControlPad:
+                        ImGui::Text("Port %d: Saturn Control Pad", portNum);
+                        break;
+                    case ymir::peripheral::PeripheralType::AnalogPad: //
+                        ImGui::Text("Port %d: Saturn 3D Control Pad (%s mode)", portNum,
+                                    (m_context.analogPadInputs[portNum - 1].analogMode ? "analog" : "digital"));
+                        break;
+                    }
+                };
+
+                displayPort(1, m_context.saturn.SMPC.GetPeripheralPort1());
+                ImGui::TextUnformatted("|");
+                displayPort(2, m_context.saturn.SMPC.GetPeripheralPort2());
+
+                ImGui::EndMainStatusBar();
+            } else {
+                ImGui::PopStyleVar();
+            }
+        }
         {
             ImGuiViewport *viewport = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -2296,6 +2413,7 @@ void App::RunEmulator() {
                 (videoSettings.autoResizeWindow && screenSizeChanged) || fitWindowToScreenNow;
 
             float menuBarHeight = drawMainMenu ? ImGui::GetFrameHeight() : 0.0f;
+            float statusBarHeight = drawStatusBar ? ImGui::GetFrameHeight() : 0.0f;
 
             // Get window size
             int ww, wh;
@@ -2310,7 +2428,7 @@ void App::RunEmulator() {
             menuBarHeight *= pixelDensity;
 #endif
 
-            wh -= menuBarHeight;
+            wh -= menuBarHeight + statusBarHeight;
 
             double scaleFactor = 1.0;
 
@@ -2369,7 +2487,7 @@ void App::RunEmulator() {
 
                 int dx = scaledWidth - ww;
                 int dy = scaledHeight - wh;
-                SDL_SetWindowSize(screen.window, scaledWidth, scaledHeight + menuBarHeight);
+                SDL_SetWindowSize(screen.window, scaledWidth, scaledHeight + menuBarHeight * 2.0f);
 
                 int nwx = std::max(wx - dx / 2, wbt);
                 int nwy = std::max(wy - dy / 2, wbl);
