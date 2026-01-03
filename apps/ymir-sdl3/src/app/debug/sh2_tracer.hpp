@@ -10,12 +10,15 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
     void ResetInterruptCounter();
     void ResetDivisionCounter();
     void ResetDMACounter(uint32 channel);
+    void SetTraceFlowStack(bool enable);
 
-    bool traceInstructions = false;
+    bool traceInstructions = false; 
     bool traceInterrupts = false;
     bool traceExceptions = false;
     bool traceDivisions = false;
     bool traceDMA = false;
+
+    bool traceFlowStack = false;
 
     struct InstructionInfo {
         uint32 pc;

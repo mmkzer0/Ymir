@@ -16,6 +16,17 @@ void SH2Tracer::ResetDMACounter(uint32 channel) {
     m_dmaCounter[channel] = 0;
 }
 
+void SH2Tracer::SetTraceFlowStack(bool enable) {
+    traceFlowStack = enable;
+    if (enable) {
+        traceInstructions = true;
+        traceInterrupts = true;
+        traceExceptions = true;
+        traceDivisions = true;
+        traceDMA = true;
+    }
+}
+
 void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
     if (!traceInstructions) {
         return;

@@ -75,8 +75,31 @@ EmuEvent SetDebugTrace(bool enable) {
             ctx.saturn.instance->CDBlock.UseTracer(&ctx.tracers.CDBlock);
             ctx.saturn.instance->CDDrive.UseTracer(&ctx.tracers.CDDrive);
             ctx.saturn.instance->YGR.UseTracer(&ctx.tracers.YGR);
+        } else {
+            ctx.tracers.masterSH2.SetTraceFlowStack(enable);
+            ctx.tracers.slaveSH2.SetTraceFlowStack(enable);
         }
         ctx.DisplayMessage(fmt::format("Debug tracing {}", (enable ? "enabled" : "disabled")));
+    });
+}
+
+EmuEvent SetFlowStackTrace(bool enable) {
+    return RunFunction([=](SharedContext &ctx) {
+        if (enable && !ctx.saturn.instance->IsDebugTracingEnabled()) {
+            ctx.saturn.instance->EnableDebugTracing(true);
+            ctx.saturn.instance->masterSH2.UseTracer(&ctx.tracers.masterSH2);
+            ctx.saturn.instance->slaveSH2.UseTracer(&ctx.tracers.slaveSH2);
+            ctx.saturn.instance->SCU.UseTracer(&ctx.tracers.SCU);
+            ctx.saturn.instance->SCSP.UseTracer(&ctx.tracers.SCSP);
+            ctx.saturn.instance->CDBlock.UseTracer(&ctx.tracers.CDBlock);
+            ctx.saturn.instance->CDDrive.UseTracer(&ctx.tracers.CDDrive);
+            ctx.saturn.instance->YGR.UseTracer(&ctx.tracers.YGR);
+        }
+
+        ctx.tracers.masterSH2.SetTraceFlowStack(enable);
+        ctx.tracers.slaveSH2.SetTraceFlowStack(enable);
+
+        ctx.DisplayMessage(fmt::format("SH2 flow/stack trace {}", (enable ? "enabled" : "disabled")));
     });
 }
 
