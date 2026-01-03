@@ -99,6 +99,7 @@ EmuEvent SetDeinterlace(bool enable);
 EmuEvent SetTransparentMeshes(bool enable);
 
 EmuEvent SetDebugTrace(bool enable);
+EmuEvent SetFlowStackTrace(bool enable);
 EmuEvent DumpMemory();
 EmuEvent DumpMemRegion(const ui::mem_view::MemoryViewerState &memView);
 

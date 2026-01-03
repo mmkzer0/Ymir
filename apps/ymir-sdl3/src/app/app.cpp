@@ -3126,10 +3126,22 @@ void App::RunEmulator() {
                 }
                 if (ImGui::BeginMenu("Debug")) {
                     bool debugTrace = m_context.saturn.instance->IsDebugTracingEnabled();
+                    bool flowStackTrace = m_context.tracers.masterSH2.traceFlowStack;
                     if (ImGui::MenuItem("Enable tracing",
                                         input::ToShortcut(inputContext, actions::dbg::ToggleDebugTrace).c_str(),
                                         &debugTrace)) {
                         m_context.EnqueueEvent(events::emu::SetDebugTrace(debugTrace));
+                    }  
+                    const bool flowStackTraceChanged = ImGui::MenuItem("Enable flow/stack trace",
+                                                                       nullptr,
+                                                                       &flowStackTrace);
+                    if (ImGui::BeginItemTooltip()) {
+                        ImGui::TextUnformatted(
+                            "Heavy SH2 control-flow/stack tracing; expect performance impact.\nEnables other SH2 traces.");
+                        ImGui::EndTooltip();
+                    }
+                    if (flowStackTraceChanged) {
+                        m_context.EnqueueEvent(events::emu::SetFlowStackTrace(flowStackTrace));
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Open memory viewer", nullptr)) {
