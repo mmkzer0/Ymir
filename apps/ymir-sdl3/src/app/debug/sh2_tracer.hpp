@@ -5,6 +5,8 @@
 
 #include <util/ring_buffer.hpp>
 
+#include <array>
+
 namespace app {
 
 struct SH2Tracer final : ymir::debug::ISH2Tracer {
@@ -20,6 +22,38 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
     bool traceDMA = false;
 
     bool traceFlowStack = false;
+
+    enum class TraceEventType : uint8 {
+        Call,
+        Return,
+        ReturnFromException,
+        Trap,
+        Branch,
+        Jump,
+        Interrupt,
+        Exception,
+        StackPush,
+        StackPop,
+    };
+
+    static const char *TraceEventMnemonic(TraceEventType type);
+
+    struct TraceEvent {
+        TraceEventType type;
+        uint32 pc;
+        uint32 target;
+        bool targetValid;
+        bool delaySlot;
+        uint16 opcode;
+        uint32 spBefore;
+        uint32 spAfter;
+        uint32 pr;
+        uint32 sr;
+        uint32 gbr;
+        uint32 vbr;
+        std::array<uint32, 16> regs;
+        uint64 counter;
+    };
 
     struct InstructionInfo {
         uint32 pc;
@@ -79,6 +113,7 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
     util::RingBuffer<ExceptionInfo, 1024> exceptions;
     util::RingBuffer<DivisionInfo, 1024> divisions;
     std::array<util::RingBuffer<DMAInfo, 1024>, 2> dmaTransfers;
+    util::RingBuffer<TraceEvent, 1024> traceEvents;
 
     struct DivisionStatistics {
         uint64 div32s = 0;
@@ -110,6 +145,7 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
 
 private:
     const ymir::sh2::SH2::Probe *m_probe = nullptr;
+    uint64 m_traceEventCounter = 0;
     uint32 m_interruptCounter = 0;
     uint32 m_divisionCounter = 0;
     std::array<uint32, 2> m_dmaCounter = {0, 0};
