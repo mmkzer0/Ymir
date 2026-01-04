@@ -9,6 +9,10 @@
 
 #include <ymir/hw/sh2/sh2_intc.hpp>
 
+namespace ymir::sh2 {
+class SH2;
+} // namespace ymir::sh2
+
 namespace ymir::debug {
 
 /// @brief Interface for SH2 tracers.
@@ -27,6 +31,10 @@ struct ISH2Tracer {
     /// @param[in] opcode the instruction opcode
     /// @param[in] delaySlot indicates if the instruction is executing in a delay slot
     virtual void ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {}
+
+    /// @brief Invoked when the tracer is attached, providing access to the SH-2 instance.
+    /// @param[in] sh2 pointer to the SH-2 being traced
+    virtual void AttachSH2(const sh2::SH2 *sh2) {}
 
     /// @brief Invoked when the CPU handles an interrupt.
     /// @param[in] vecNum the interrupt vector number

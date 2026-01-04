@@ -1,5 +1,7 @@
 #include "sh2_tracer.hpp"
 
+#include <ymir/hw/sh2/sh2.hpp>
+
 using namespace ymir;
 
 namespace app {
@@ -14,6 +16,12 @@ void SH2Tracer::ResetDivisionCounter() {
 
 void SH2Tracer::ResetDMACounter(uint32 channel) {
     m_dmaCounter[channel] = 0;
+}
+
+void SH2Tracer::AttachSH2(const ymir::sh2::SH2 *sh2) {
+    if (sh2 != nullptr) {
+        m_probe = &sh2->GetProbe();
+    }
 }
 
 void SH2Tracer::SetTraceFlowStack(bool enable) {
