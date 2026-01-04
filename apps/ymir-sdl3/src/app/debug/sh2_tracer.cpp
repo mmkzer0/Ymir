@@ -6,6 +6,22 @@ using namespace ymir;
 
 namespace app {
 
+const char *SH2Tracer::TraceEventMnemonic(TraceEventType type) {
+    switch (type) {
+    case TraceEventType::Call: return "call";
+    case TraceEventType::Return: return "ret";
+    case TraceEventType::ReturnFromException: return "rte";
+    case TraceEventType::Trap: return "trap";
+    case TraceEventType::Branch: return "branch";
+    case TraceEventType::Jump: return "jump";
+    case TraceEventType::Interrupt: return "intr";
+    case TraceEventType::Exception: return "exc";
+    case TraceEventType::StackPush: return "push";
+    case TraceEventType::StackPop: return "pop";
+    }
+    return "unknown";
+}
+
 void SH2Tracer::ResetInterruptCounter() {
     m_interruptCounter = 0;
 }
