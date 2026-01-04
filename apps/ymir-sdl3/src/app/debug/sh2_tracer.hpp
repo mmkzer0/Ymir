@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ymir/debug/sh2_tracer_base.hpp>
+#include <ymir/hw/sh2/sh2.hpp>
 
 #include <util/ring_buffer.hpp>
 
@@ -108,6 +109,7 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
     std::array<DMAStatistics, 2> dmaStats;
 
 private:
+    const ymir::sh2::SH2::Probe *m_probe = nullptr;
     uint32 m_interruptCounter = 0;
     uint32 m_divisionCounter = 0;
     std::array<uint32, 2> m_dmaCounter = {0, 0};
@@ -115,6 +117,7 @@ private:
     // -------------------------------------------------------------------------
     // ISH2Tracer implementation
 
+    void AttachSH2(const ymir::sh2::SH2 *sh2) final;
     void ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) final;
     void Interrupt(uint8 vecNum, uint8 level, ymir::sh2::InterruptSource source, uint32 pc) final;
     void Exception(uint8 vecNum, uint32 pc, uint32 sr) final;

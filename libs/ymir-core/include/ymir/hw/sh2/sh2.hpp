@@ -116,6 +116,9 @@ public:
     // Pass nullptr to disable tracing.
     void UseTracer(debug::ISH2Tracer *tracer) {
         m_tracer = tracer;
+        if (m_tracer) {
+            m_tracer->AttachSH2(this);
+        }
     }
 
     // --- Breakpoints
