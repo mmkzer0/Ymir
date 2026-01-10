@@ -150,6 +150,9 @@ private:
     uint32 m_divisionCounter = 0;
     std::array<uint32, 2> m_dmaCounter = {0, 0};
 
+    bool ClassifyFlowEvent(uint32 pc, uint16 opcode, TraceEventType &type, uint32 &target, bool &targetValid,
+                           uint32 &spAfter) const;
+
     // -------------------------------------------------------------------------
     // ISH2Tracer implementation
 
