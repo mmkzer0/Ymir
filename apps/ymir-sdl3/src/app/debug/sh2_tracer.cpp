@@ -81,10 +81,12 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
     bool targetValid = false;
     uint32 spAfter = 0;
 
+    // opcode was no enumerated barrier -> return early
     if (!ClassifyFlowEvent(pc, opcode, type, target, targetValid, spAfter)) {
         return;
     }
 
+    // build new event
     TraceEvent evt{};
     evt.type = type;
     evt.pc = pc;
@@ -94,6 +96,7 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
     evt.opcode = opcode;
     evt.counter = m_traceEventCounter++;
 
+    // ensure probe is not null
     if (m_probe != nullptr) {
         evt.regs = m_probe->R();
         evt.pr = m_probe->PR();
@@ -107,8 +110,10 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
         evt.spBefore = 0;
     }
 
+    // set sp after instruction
     evt.spAfter = spAfter != 0 ? spAfter : evt.spBefore;
 
+    // forward event to ring buffer
     traceEvents.Write(evt);
 }
 
@@ -286,6 +291,8 @@ bool SH2Tracer::ClassifyFlowEvent(uint32 pc, uint16 opcode, TraceEventType &type
         // Delayed branch: PR → PC 
         // PC = PR + 4
         type = TraceEventType::Return;
+        // TODO: set proper return target
+        target = ( m_probe->PR() );         // make return target visible
         return true;
     }
     if (opcode == 0x002B) { // RTE
