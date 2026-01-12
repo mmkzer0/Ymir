@@ -8,12 +8,17 @@ Uses save state file version 11.
 
 ### New features and improvements
 
+- Debugger: Optimize SH2 breakpoints and watchpoints when debug tracing is enabled. They no longer become more expensive with the amount of entries added and the baseline cost is lower than before.
 - GameDB: Add new flags to double the clock rate of the MC68EC000 and stall VDP1 drawing on VRAM writes to improve compatibility with some games.
+- MIDI: Force RtMidi to use dummy API if it fails to initialize, allowing Ymir to run without MIDI drivers.
+- Video: Add option to enable/disable video synchronization in full screen mode.
 
 ### Fixes
 
 - Build: Introduced separate x64-win-llvm toolchains for SSE2 and AVX2 support. Fixes Windows SSE2 builds requiring SSE4.2 instructions. (#713; thanks to @Wunkolo)
 - GameDB: Double the MC68EC000 clock rate and force fast bus timings to fix crashes in Vampire Savior - The Lord of Vampire. (#699)
+- SH2: Fix `@(disp.PC)` loads being decoded as stores for watchpoints.
+- SH2: Fix `ldc/lds @Rm` decoding from the wrong position for watchpoints.
 - VDP1: Properly load save state data when threaded VDP1 rendering is enabled.
 - VDP1: Stall VDP1 drawing on VRAM writes exclusively on Mega Man X3 and Rockman X3 to fix garbled sprites. (#244)
 
