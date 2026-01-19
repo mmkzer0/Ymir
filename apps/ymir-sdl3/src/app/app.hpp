@@ -3,7 +3,8 @@
 #include "cmdline_opts.hpp"
 
 #include "shared_context.hpp"
-#include <app/services/savestates/SaveStateService.hpp>
+
+#include "services/savestates/save_state_service.hpp"
 
 #include "ui/windows/about_window.hpp"
 #include "ui/windows/backup_ram_manager_window.hpp"
@@ -50,7 +51,7 @@ public:
 private:
     CommandLineOptions m_options;
 
-    savestates::SaveStateService m_saveStateService;
+    services::SaveStateService m_saveStateService;
     SharedContext m_context;
     SDL_PropertiesID m_fileDialogProps;
 

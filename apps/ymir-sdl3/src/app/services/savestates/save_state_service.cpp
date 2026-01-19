@@ -2,18 +2,21 @@
 // Created by Lennart Kotzur on 18.11.25.
 //
 
-// SaveStateService.cpp
-#include "SaveStateService.hpp"
+#include "save_state_service.hpp"
 
 #include <cassert>
 
 namespace {
+
 bool InRange(std::size_t i, std::size_t n) {
     return i < n;
 }
+
 } // namespace
 
-namespace app::savestates {
+using namespace app::savestates;
+
+namespace app::services {
 
 std::optional<std::reference_wrapper<const SaveState>> SaveStateService::Peek(std::size_t slot) const noexcept {
     if (!InRange(slot, m_slots_.size())) {
@@ -64,4 +67,4 @@ void SaveStateService::SetCurrentSlot(std::size_t slot) noexcept {
     return m_saveStateLocks_[slot];
 }
 
-} // namespace app::savestates
+} // namespace app::services
