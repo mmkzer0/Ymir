@@ -3,7 +3,8 @@
 #include "gui_event_factory.hpp"
 
 #include <app/shared_context.hpp>
-#include <app/services/savestates/types.hpp>
+
+#include <app/services/savestates/save_state_service.hpp>
 
 #include <memory>
 #include <ymir/sys/saturn.hpp>
@@ -604,9 +605,8 @@ EmuEvent SetSCSPStepGranularity(uint32 granularity) {
 
 EmuEvent LoadState(uint32 slot) {
     return RunFunction([=](SharedContext &ctx) {
-
-        // grab the service as &saves and check for bounds
-        auto &saves = ctx.saveStateService;
+        // grab the service and check for bounds
+        auto &saves = ctx.serviceLocator.GetRequired<services::SaveStateService>();
         if (slot >= saves.Size()) {
             return;
         }
@@ -734,9 +734,8 @@ EmuEvent LoadState(uint32 slot) {
 
 EmuEvent SaveState(uint32 slot) {
     return RunFunction([=](SharedContext &ctx) {
-
         // grab the service and check bounds
-        auto &saves = ctx.saveStateService;
+        auto &saves = ctx.serviceLocator.GetRequired<services::SaveStateService>();
         if (slot >= saves.Size()) {
             return;
         }
@@ -746,12 +745,11 @@ EmuEvent SaveState(uint32 slot) {
             auto lock = std::unique_lock{saves.SlotMutex(slot)};
             savestates::SaveState slotState{};
 
-            // build new state logically 
-            // test if state is present and either clone or create a new one 
+            // build new state logically
+            // test if state is present and either clone or create a new one
             auto savePtr = saves.Peek(slot);
-            slotState.state = savePtr && savePtr->get().state
-                                   ? std::make_unique<state::State>(*savePtr->get().state)
-                                   : std::make_unique<state::State>();
+            slotState.state = savePtr && savePtr->get().state ? std::make_unique<state::State>(*savePtr->get().state)
+                                                              : std::make_unique<state::State>();
 
             // save state to selected slot and set timestamp
             ctx.saturn.instance->SaveState(*slotState.state);
