@@ -103,8 +103,7 @@ EmuEvent SetFlowStackTrace(bool enable);
 EmuEvent DumpMemory();
 EmuEvent DumpMemRegion(const ui::mem_view::MemoryViewerState &memView);
 
-EmuEvent InsertPort1Peripheral(ymir::peripheral::PeripheralType type);
-EmuEvent InsertPort2Peripheral(ymir::peripheral::PeripheralType type);
+EmuEvent InsertPeripheral(uint32 port, ymir::peripheral::PeripheralType type);
 
 EmuEvent InsertBackupMemoryCartridge(std::filesystem::path path);
 EmuEvent Insert8MbitDRAMCartridge();

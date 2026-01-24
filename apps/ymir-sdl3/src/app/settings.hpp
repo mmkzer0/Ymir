@@ -18,6 +18,8 @@
 
 #include <ymir/util/observable.hpp>
 
+#include "settings_defaults.hpp"
+
 #include <fmt/format.h>
 #include <fmt/std.h>
 #include <toml++/toml.hpp>
@@ -34,10 +36,6 @@ namespace app {
 
 inline constexpr std::string_view kSettingsFile = "Ymir.toml";
 inline constexpr std::string_view kGameControllerDBFile = "gamecontrollerdb.txt";
-
-inline constexpr float kMinArcadeRacerSensitivity = 0.2f;
-inline constexpr float kMaxArcadeRacerSensitivity = 2.0f;
-inline constexpr float kDefaultArcadeRacerSensitivity = 0.5f;
 
 struct SettingsLoadResult {
     enum class Type { Success, TOMLParseError, UnsupportedConfigVersion };
@@ -378,8 +376,43 @@ struct Settings {
                     input::InputBind switchMode{actions::mission_stick::SwitchMode};
                 } binds;
             } missionStick;
+
+            struct VirtuaGun {
+                struct Binds {
+                    input::InputBind start{actions::virtua_gun::Start};
+                    input::InputBind trigger{actions::virtua_gun::Trigger};
+                    input::InputBind reload{actions::virtua_gun::Reload};
+                    input::InputBind up{actions::virtua_gun::Up};
+                    input::InputBind down{actions::virtua_gun::Down};
+                    input::InputBind left{actions::virtua_gun::Left};
+                    input::InputBind right{actions::virtua_gun::Right};
+                    input::InputBind move{actions::virtua_gun::Move};
+                    input::InputBind recenter{actions::virtua_gun::Recenter};
+                    input::InputBind speedBoost{actions::virtua_gun::SpeedBoost};
+                    input::InputBind speedToggle{actions::virtua_gun::SpeedToggle};
+                } binds;
+
+                util::Observable<float> speed;
+                util::Observable<float> speedBoostFactor;
+
+                struct Crosshair {
+                    std::array<float, 4> color; // R,G,B,A
+                    float radius;
+                    float thickness;
+                    float rotation;
+
+                    std::array<float, 4> strokeColor; // R,G,B,A
+                    float strokeThickness;
+                } crosshair;
+            } virtuaGun;
         };
         std::array<Port, 2> ports;
+
+        struct Mouse {
+            enum class CaptureMode { SystemCursor, PhysicalMouse };
+
+            util::Observable<CaptureMode> captureMode;
+        } mouse;
 
         struct Gamepad {
             util::Observable<float> lsDeadzone;
@@ -506,6 +539,12 @@ struct Settings {
     [[nodiscard]] std::unordered_set<input::MappedAction> ResetBinds(Input::Port::MissionStick::Binds &binds,
                                                                      bool useDefaults);
 
+    // Restores all default input binds for the specified Virtua Gun controller.
+    // Returns all unbound actions.
+    // If useDefaults is true, restores the default binds, otherwise all binds are cleared.
+    [[nodiscard]] std::unordered_set<input::MappedAction> ResetBinds(Input::Port::VirtuaGun::Binds &binds,
+                                                                     bool useDefaults);
+
 private:
     SharedContext &m_context;
 
@@ -522,6 +561,7 @@ private:
     std::array<InputMap, 2> m_analogPadInputs;
     std::array<InputMap, 2> m_arcadeRacerInputs;
     std::array<InputMap, 2> m_missionStickInputs;
+    std::array<InputMap, 2> m_virtuaGunInputs;
 
     InputMap &GetInputMapForContext(void *context);
 
