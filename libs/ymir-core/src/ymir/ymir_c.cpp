@@ -1,6 +1,7 @@
 #include <ymir/ymir_c.h>
 
 #include <ymir/sys/saturn.hpp>
+#include <ymir/util/dev_log.hpp>
 #include <ymir/version.hpp>
 
 #include <fmt/format.h>
@@ -20,6 +21,34 @@ struct ymir_handle {
 };
 
 namespace {
+
+ymir_log_level_t ToLogLevel(devlog::Level level) {
+    switch (level) {
+        case devlog::level::trace:
+            return YMIR_LOG_LEVEL_TRACE;
+        case devlog::level::debug:
+            return YMIR_LOG_LEVEL_DEBUG;
+        case devlog::level::info:
+            return YMIR_LOG_LEVEL_INFO;
+        case devlog::level::warn:
+            return YMIR_LOG_LEVEL_WARN;
+        case devlog::level::error:
+            return YMIR_LOG_LEVEL_ERROR;
+        default:
+            return YMIR_LOG_LEVEL_INFO;
+    }
+}
+
+void DevLogSink(devlog::Level level, const char *message, void *user_data) {
+    auto *handle = static_cast<ymir_handle *>(user_data);
+    if (handle == nullptr) {
+        return;
+    }
+    if (handle->log_callback == nullptr) {
+        return;
+    }
+    handle->log_callback(handle->log_user_data, ToLogLevel(level), message);
+}
 
 void EmitLog(ymir_handle *handle, ymir_log_level_t level, const char *message) {
     if (handle == nullptr) {
@@ -64,6 +93,12 @@ ymir_handle_t *ymir_create(const ymir_config_t *config) {
 }
 
 void ymir_destroy(ymir_handle_t *handle) {
+    if (handle != nullptr) {
+        const auto sink_state = devlog::GetLogSink();
+        if (sink_state.sink == &DevLogSink && sink_state.user_data == handle) {
+            devlog::SetLogSink(nullptr, nullptr);
+        }
+    }
     delete handle;
 }
 
@@ -73,6 +108,14 @@ void ymir_set_log_callback(ymir_handle_t *handle, ymir_log_callback_t callback, 
     }
     handle->log_callback = callback;
     handle->log_user_data = user_data;
+    if (callback != nullptr) {
+        devlog::SetLogSink(&DevLogSink, handle);
+    } else {
+        const auto sink_state = devlog::GetLogSink();
+        if (sink_state.sink == &DevLogSink && sink_state.user_data == handle) {
+            devlog::SetLogSink(nullptr, nullptr);
+        }
+    }
 }
 
 ymir_result_t ymir_set_ipl_path(ymir_handle_t *handle, const char *path) {

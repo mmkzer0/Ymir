@@ -42,6 +42,7 @@ typedef struct ymir_config {
 YMIR_CORE_EXPORT ymir_handle_t *ymir_create(const ymir_config_t *config);
 YMIR_CORE_EXPORT void ymir_destroy(ymir_handle_t *handle);
 
+// Note: devlog output is global; the most recently set callback receives it.
 YMIR_CORE_EXPORT void ymir_set_log_callback(ymir_handle_t *handle, ymir_log_callback_t callback, void *user_data);
 
 YMIR_CORE_EXPORT ymir_result_t ymir_set_ipl_path(ymir_handle_t *handle, const char *path);
