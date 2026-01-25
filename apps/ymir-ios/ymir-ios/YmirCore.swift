@@ -157,6 +157,15 @@ final class EmulatorController: ObservableObject {
         return String(cString: message)
     }
 
+    func copyFramebuffer(into buffer: UnsafeMutableRawPointer, byteCount: Int,
+                         info: inout ymir_framebuffer_info_t, frameId: inout UInt64) -> Bool {
+        guard let handle = handle else {
+            return false
+        }
+        let result = ymir_copy_framebuffer(handle, buffer, byteCount, &info, &frameId)
+        return result == YMIR_RESULT_OK
+    }
+
     private func setRunningInternal(_ value: Bool) {
         runStateLock.lock()
         runningInternal = value

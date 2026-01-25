@@ -30,6 +30,7 @@ struct ContentView: View {
                 header
                 statusCard
                 controls
+                videoPanel
                 logPanel
             }
             .padding(20)
@@ -178,6 +179,29 @@ struct ContentView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private extension ContentView {
+    var videoPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Video")
+                .font(.custom("AvenirNext-DemiBold", size: 12))
+                .foregroundStyle(AppColors.panelText.opacity(0.7))
+
+            MetalFramebufferView(emulator: emulator)
+                .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .background(Color.black.opacity(0.9))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .padding(14)
+        .background(AppColors.panel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(AppColors.panelStroke, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
