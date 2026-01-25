@@ -1,0 +1,286 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 55;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1A2B3C4D5E6F7890A1B2C3EB /* YmirApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7890A1B2C3E2 /* YmirApp.swift */; };
+		1A2B3C4D5E6F7890A1B2C3EC /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7890A1B2C3E3 /* ContentView.swift */; };
+		1A2B3C4D5E6F7890A1B2C3ED /* YmirCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7890A1B2C3E4 /* YmirCore.swift */; };
+		1A2B3C4D5E6F7890A1B2C3EE /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7890A1B2C3E5 /* LogStore.swift */; };
+		1A2B3C4D5E6F7890A1B2C3EF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7890A1B2C3E7 /* Assets.xcassets */; };
+		1A2B3C4D5E6F7890A1B2C3F0 /* ymir-core.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F7890A1B2C3E9 /* ymir-core.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1A2B3C4D5E6F7890A1B2C3E2 /* YmirApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YmirApp.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E3 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E4 /* YmirCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YmirCore.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E5 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E8 /* ymir-ios-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "ymir-ios-Bridging-Header.h"; sourceTree = "<group>"; };
+		1A2B3C4D5E6F7890A1B2C3E9 /* ymir-core.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "ymir-core.xcframework"; path = "../../build/ios/ymir-core.xcframework"; sourceTree = SOURCE_ROOT; };
+		1A2B3C4D5E6F7890A1B2C3EA /* ymir-ios.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = "ymir-ios.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1A2B3C4D5E6F7890A1B2C3E1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A2B3C4D5E6F7890A1B2C3F0 /* ymir-core.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A2B3C4D5E6F7890A1B2C3D6 = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F7890A1B2C3F1 /* ymir-ios */,
+				1A2B3C4D5E6F7890A1B2C3D8 /* Frameworks */,
+				1A2B3C4D5E6F7890A1B2C3D7 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F7890A1B2C3D7 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F7890A1B2C3EA /* ymir-ios.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F7890A1B2C3D8 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F7890A1B2C3E9 /* ymir-core.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		1A2B3C4D5E6F7890A1B2C3F1 /* ymir-ios */ = {
+			isa = PBXGroup;
+			children = (
+				1A2B3C4D5E6F7890A1B2C3E2 /* YmirApp.swift */,
+				1A2B3C4D5E6F7890A1B2C3E3 /* ContentView.swift */,
+				1A2B3C4D5E6F7890A1B2C3E4 /* YmirCore.swift */,
+				1A2B3C4D5E6F7890A1B2C3E5 /* LogStore.swift */,
+				1A2B3C4D5E6F7890A1B2C3E7 /* Assets.xcassets */,
+				1A2B3C4D5E6F7890A1B2C3E6 /* Info.plist */,
+				1A2B3C4D5E6F7890A1B2C3E8 /* ymir-ios-Bridging-Header.h */,
+			);
+			path = "ymir-ios";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1A2B3C4D5E6F7890A1B2C3D5 /* ymir-ios */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A2B3C4D5E6F7890A1B2C3DC /* Build configuration list for PBXNativeTarget "ymir-ios" */;
+			buildPhases = (
+				1A2B3C4D5E6F7890A1B2C3DF /* Sources */,
+				1A2B3C4D5E6F7890A1B2C3E0 /* Resources */,
+				1A2B3C4D5E6F7890A1B2C3E1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "ymir-ios";
+			productName = "ymir-ios";
+			productReference = 1A2B3C4D5E6F7890A1B2C3EA /* ymir-ios.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1A2B3C4D5E6F7890A1B2C3D4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1520;
+				LastUpgradeCheck = 1520;
+				TargetAttributes = {
+					1A2B3C4D5E6F7890A1B2C3D5 = {
+						CreatedOnToolsVersion = 15.2;
+					};
+				};
+			};
+			buildConfigurationList = 1A2B3C4D5E6F7890A1B2C3D9 /* Build configuration list for PBXProject "ymir-ios" */;
+			compatibilityVersion = "Xcode 13.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 1A2B3C4D5E6F7890A1B2C3D6;
+			productRefGroup = 1A2B3C4D5E6F7890A1B2C3D7 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1A2B3C4D5E6F7890A1B2C3D5 /* ymir-ios */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		1A2B3C4D5E6F7890A1B2C3E0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A2B3C4D5E6F7890A1B2C3EF /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1A2B3C4D5E6F7890A1B2C3DF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A2B3C4D5E6F7890A1B2C3EB /* YmirApp.swift in Sources */,
+				1A2B3C4D5E6F7890A1B2C3EC /* ContentView.swift in Sources */,
+				1A2B3C4D5E6F7890A1B2C3ED /* YmirCore.swift in Sources */,
+				1A2B3C4D5E6F7890A1B2C3EE /* LogStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1A2B3C4D5E6F7890A1B2C3DA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		1A2B3C4D5E6F7890A1B2C3DB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				DEVELOPMENT_TEAM = "";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		1A2B3C4D5E6F7890A1B2C3DD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = C8W23KG626;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../../build/ios",
+					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../../build/ios/ymir-core.xcframework/ios-arm64/Headers",
+					"$(PROJECT_DIR)/../../build/ios/ymir-core.xcframework/ios-arm64-simulator/Headers",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = "ymir-ios/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Ymir;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = v0.1;
+				OTHER_LDFLAGS = "-lc++";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.ymir.ymir-ios";
+				PRODUCT_NAME = "ymir-ios";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "ymir-ios/ymir-ios-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1A2B3C4D5E6F7890A1B2C3DE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = C8W23KG626;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../../build/ios",
+					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../../build/ios/ymir-core.xcframework/ios-arm64/Headers",
+					"$(PROJECT_DIR)/../../build/ios/ymir-core.xcframework/ios-arm64-simulator/Headers",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = "ymir-ios/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Ymir;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.games";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = v0.1;
+				OTHER_LDFLAGS = "-lc++";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.ymir.ymir-ios";
+				PRODUCT_NAME = "ymir-ios";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_OBJC_BRIDGING_HEADER = "ymir-ios/ymir-ios-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A2B3C4D5E6F7890A1B2C3D9 /* Build configuration list for PBXProject "ymir-ios" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A2B3C4D5E6F7890A1B2C3DA /* Debug */,
+				1A2B3C4D5E6F7890A1B2C3DB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1A2B3C4D5E6F7890A1B2C3DC /* Build configuration list for PBXNativeTarget "ymir-ios" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1A2B3C4D5E6F7890A1B2C3DD /* Debug */,
+				1A2B3C4D5E6F7890A1B2C3DE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 1A2B3C4D5E6F7890A1B2C3D4 /* Project object */;
+}
