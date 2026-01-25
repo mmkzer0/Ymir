@@ -97,7 +97,7 @@ private:
     void CheckForUpdates(bool skipCache);
 
     void RebindInputs();
-    void UpdateTimeBasedInputs(double timeDelta);
+    void UpdateInputs(double timeDelta);
     void DrawInputs(ImDrawList *drawList);
 
     bool CaptureMouse(uint32 id, uint32 port);
@@ -107,6 +107,7 @@ private:
     void ReleaseAllMice();
     void ConfigureMouseCapture();
     void ConnectMouseToPeripheral(uint32 id);
+    bool IsMouseCaptured() const;
 
     bool HasValidPeripheralsForMouseCapture() const;
     std::set<uint32> GetCandidatePeripheralsForMouseCapture() const;

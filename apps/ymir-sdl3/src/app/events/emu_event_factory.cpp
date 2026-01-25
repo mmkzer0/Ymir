@@ -278,6 +278,7 @@ static void InsertPeripheral(peripheral::PeripheralType type, peripheral::Periph
     case ymir::peripheral::PeripheralType::ArcadeRacer: port.ConnectArcadeRacer(); break;
     case ymir::peripheral::PeripheralType::MissionStick: port.ConnectMissionStick(); break;
     case ymir::peripheral::PeripheralType::VirtuaGun: port.ConnectVirtuaGun(); break;
+    case ymir::peripheral::PeripheralType::ShuttleMouse: port.ConnectShuttleMouse(); break;
     }
 }
 
