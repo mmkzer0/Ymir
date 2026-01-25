@@ -59,6 +59,7 @@ if constexpr (devlog::trace_enabled<grp::base>) {
 
 #include <fmt/format.h>
 
+#include <atomic>
 #include <concepts>
 #include <iterator>
 #include <string>
@@ -73,6 +74,24 @@ inline constexpr bool globalEnable = Ymir_ENABLE_DEVLOG;
 
 /// @brief Log level type - a simple integer type.
 using Level = uint32;
+
+/// @brief Log sink callback type.
+/// @param level the devlog level for the message
+/// @param message the formatted message (valid only for the duration of the callback)
+/// @param user_data user data pointer passed to SetLogSink
+using LogSinkFn = void (*)(Level level, const char *message, void *user_data);
+
+/// @brief Current log sink state.
+struct LogSinkState {
+    LogSinkFn sink;
+    void *user_data;
+};
+
+/// @brief Sets an optional log sink. When set, devlog output is sent to it instead of stdout.
+inline void SetLogSink(LogSinkFn sink, void *user_data);
+
+/// @brief Retrieves the current log sink.
+inline LogSinkState GetLogSink();
 
 namespace level {
     /// @brief The lowest log level for fine-grained details.
@@ -168,6 +187,13 @@ namespace detail {
     template <Level level, detail::Group TGroup>
     inline constexpr bool enabled = globalEnable && TGroup::enabled && level >= TGroup::level;
 
+    inline std::atomic<LogSinkFn> g_log_sink{nullptr};
+    inline std::atomic<void *> g_log_sink_user_data{nullptr};
+
+    inline LogSinkState GetLogSinkState() {
+        return {g_log_sink.load(std::memory_order_acquire), g_log_sink_user_data.load(std::memory_order_acquire)};
+    }
+
     /// @brief Logs a message to the dev log of the specified group.
     /// @tparam ...TArgs the log message's argument types
     /// @tparam level the log level
@@ -182,7 +208,13 @@ namespace detail {
             auto out = std::back_inserter(buf);
             fmt::format_to(out, "{:5s} | {:16s} | ", level::name<level>, TGroup::name);
             fmt::format_to(out, fmt, static_cast<TArgs &&>(args)...);
-            fmt::println("{}", fmt::to_string(buf));
+            const auto message = fmt::to_string(buf);
+            const auto sink_state = GetLogSinkState();
+            if (sink_state.sink != nullptr) {
+                sink_state.sink(level, message.c_str(), sink_state.user_data);
+                return;
+            }
+            fmt::println("{}", message);
         }
     }
 
@@ -201,11 +233,26 @@ namespace detail {
             auto out = std::back_inserter(buf);
             fmt::format_to(out, "{:5s} | {:16s} | ", level::name<level>, TGroup::Name(nameArgs));
             fmt::format_to(out, fmt, static_cast<TArgs &&>(args)...);
-            fmt::println("{}", fmt::to_string(buf));
+            const auto message = fmt::to_string(buf);
+            const auto sink_state = GetLogSinkState();
+            if (sink_state.sink != nullptr) {
+                sink_state.sink(level, message.c_str(), sink_state.user_data);
+                return;
+            }
+            fmt::println("{}", message);
         }
     }
 
 } // namespace detail
+
+inline void SetLogSink(LogSinkFn sink, void *user_data) {
+    detail::g_log_sink_user_data.store(user_data, std::memory_order_release);
+    detail::g_log_sink.store(sink, std::memory_order_release);
+}
+
+inline LogSinkState GetLogSink() {
+    return detail::GetLogSinkState();
+}
 
 /// @brief Determines if trace logging is enabled for the group.
 /// @tparam TGroup the group to check
