@@ -1,6 +1,7 @@
 ## Create the library target
 add_library(ymir-core
     include/ymir/ymir.hpp
+    include/ymir/ymir_c.h
     include/ymir/version.hpp
 
     include/ymir/core/configuration.hpp
@@ -218,6 +219,7 @@ add_library(ymir-core
 
 
     src/ymir/ymir.cpp
+    src/ymir/ymir_c.cpp
 
     src/ymir/core/configuration.cpp
     src/ymir/core/hash.cpp

@@ -18,6 +18,7 @@ option(Ymir_EXTRA_INLINING "Enable more aggressive inlining (slows down build!)"
 option(Ymir_ENABLE_TESTS "Enable tests for Ymir" "${is_top_level}")
 option(Ymir_ENABLE_SANDBOX "Compile the sandbox app" "${is_top_level}")
 option(Ymir_ENABLE_YMDASM "Compile the disassembly tool" "${is_top_level}")
+option(Ymir_ENABLE_SDL3 "Compile the SDL3 frontend" "${is_top_level}")
 option(Ymir_ENABLE_IPO "Enable IPO / LTO for Ymir" ON)
 option(Ymir_ENABLE_DEVLOG "Enable development logs" ${Ymir_DEV_BUILD})
 option(Ymir_ENABLE_DEV_ASSERTIONS "Enable development-time assertions" OFF)
@@ -122,6 +123,8 @@ if (Ymir_ENABLE_TESTS)
 endif ()
 
 ## Configure Visual Studio solution
-if (MSVC)
-    set_property(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}" PROPERTY VS_STARTUP_PROJECT ymir-sdl3)
+if (MSVC AND Ymir_ENABLE_SDL3)
+    if (TARGET ymir-sdl3)
+        set_property(DIRECTORY "${CMAKE_CURRENT_LIST_DIR}" PROPERTY VS_STARTUP_PROJECT ymir-sdl3)
+    endif ()
 endif ()
