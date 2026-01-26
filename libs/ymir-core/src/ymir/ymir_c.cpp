@@ -358,6 +358,24 @@ void ymir_get_audio_info(ymir_handle_t *handle, ymir_audio_info_t *out_info) {
     out_info->format = YMIR_AUDIO_FORMAT_S16;   // Signed 16-bit PCM
 }
 
+void ymir_get_audio_buffer_state(ymir_handle_t *handle, ymir_audio_buffer_state_t *out_state) {
+    if (out_state == nullptr) {
+        return;
+    }
+
+    *out_state = ymir_audio_buffer_state_t{};
+    out_state->capacity_frames = kAudioBufferFrames - 1u;
+
+    if (handle == nullptr) {
+        return;
+    }
+
+    auto &buffer = handle->audio_buffer;
+    const uint32 write = buffer.write_index.load(std::memory_order_acquire);
+    const uint32 read = buffer.read_index.load(std::memory_order_relaxed);
+    out_state->queued_frames = (write - read) & kAudioBufferMask;
+}
+
 size_t ymir_read_audio_samples(ymir_handle_t *handle, int16_t *out_samples, size_t max_frames) {
     if (handle == nullptr || out_samples == nullptr || max_frames == 0) {
         return 0;
