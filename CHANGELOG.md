@@ -11,7 +11,7 @@ Introduced save state file version 12.
 - Debugger: Optimize SH2 breakpoints and watchpoints when debug tracing is enabled. They no longer become more expensive with the amount of entries added and the baseline cost is lower than before.
 - GameDB: Add new flags to double the clock rate of the MC68EC000 and stall VDP1 drawing on VRAM writes to improve compatibility with some games.
 - Input: Added support for mouse events.
-- Input: Implemented two mouse capture modes:
+- Input: Mouse capture support for light gun and mouse peripherals, supporting these modes:
     - System mouse: binds the system mouse cursor to a single peripheral. Mouse cursor is still available to interact with the GUI.
     - Physical mouse: binds one or more mice to different peripherals. Disables the system cursor while any mice is bound.
 - Input: Implemented Shuttle Mouse peripheral. (#32)
@@ -19,10 +19,13 @@ Introduced save state file version 12.
 - MIDI: Force RtMidi to use dummy API if it fails to initialize, allowing Ymir to run without MIDI drivers.
 - System: You can now select a preferred system variant (Saturn, HiSaturn, V-Saturn or Dev Kit) and Ymir will automatically pick a matching IPL ROM. (#637, #725; @Fueziwa)
 - Video: Add option to enable/disable video synchronization in full screen mode.
+- Video: Allow selecting full screen resolution and target display. (#705)
 
 ### Fixes
 
 - Build: Introduced separate x64-win-llvm toolchains for SSE2 and AVX2 support. Fixes Windows SSE2 builds requiring SSE4.2 instructions. (#713; thanks to @Wunkolo)
+- Build: Perform ad-hoc signature on macOS binaries to work around the "damaged" app warning. (#698; thanks to @Wunkolo)
+- Build: Remove duplicate binary from macOS packages.
 - GameDB: Double the MC68EC000 clock rate and force fast bus timings to fix crashes in Vampire Savior - The Lord of Vampire. (#699)
 - SH2: Fix `@(disp.PC)` loads being decoded as stores for watchpoints.
 - SH2: Fix `ldc/lds @Rm` decoding from the wrong position for watchpoints.
