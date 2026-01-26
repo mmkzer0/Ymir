@@ -24,7 +24,7 @@ namespace bit {
 /// @return `true` if `value` is a power of two
 template <std::unsigned_integral T>
 [[nodiscard]] FORCE_INLINE constexpr bool is_power_of_two(T value) noexcept {
-    return value != 0 && (value & (value - 1)) == 0;
+    return std::popcount(value) == 1;
 }
 
 /// @brief Returns the next power of two not less than `value`.
@@ -33,24 +33,10 @@ template <std::unsigned_integral T>
 /// @return `value` rounded up to the next power of two
 template <std::unsigned_integral T>
 [[nodiscard]] FORCE_INLINE constexpr T next_power_of_two(T value) noexcept {
-    value--;
-    value |= value >> 1u;
-    value |= value >> 2u;
-    value |= value >> 4u;
-    if constexpr (sizeof(T) > 1) {
-        value |= value >> 8u;
-    }
-    if constexpr (sizeof(T) > 2) {
-        value |= value >> 16u;
-    }
-    if constexpr (sizeof(T) > 4) {
-        value |= value >> 32ull;
-    }
-    value++;
-    return value;
+    return std::bit_ceil(value);
 }
 
-/// @brief Sign-extends a `B`-int integer from the least significant bits of `value`.
+/// @brief Sign-extends a `B`-bit integer from the least significant bits of `value`.
 /// @tparam B the bit width of the value
 /// @tparam T the type of the integral
 /// @param[in] value the value to sign-extend
@@ -165,9 +151,7 @@ FORCE_INLINE constexpr void deposit_into(T &dest, TV value) noexcept {
 /// @return the bits of value selected by `mask`, gathered into the least significant bits
 template <std::size_t mask, std::integral T>
 [[nodiscard]] FORCE_INLINE constexpr T gather(T value) noexcept {
-    // TODO: use _pext_u32/64 if available
-
-    // Hacker's Delight, volume 2, page 153
+    // Hacker's Delight, 2nd edition, page 153
     value &= mask;               // Clear irrelevant bits
     constexpr T mk = ~mask << 1; // We will count 0s to the right
     T m = mask;
@@ -199,9 +183,7 @@ template <std::size_t mask, std::integral T>
 /// @return the least significant bits of `value` scattered into the `mask` bits
 template <std::size_t mask, std::integral T>
 [[nodiscard]] FORCE_INLINE constexpr T scatter(T value) noexcept {
-    // TODO: use _pdep_u32/64 if available
-
-    // Hacker's Delight, volume 2, page 157
+    // Hacker's Delight, 2nd edition, page 157
     T m0 = mask;                       // Save original mask
     T mk = static_cast<T>(~mask << 1); // We will count 0s to the right
     T m = mask;
