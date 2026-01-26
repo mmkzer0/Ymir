@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import SwiftUI
 
 private let ymirLogCallback: ymir_log_callback_t = { userData, level, message in
@@ -21,6 +22,7 @@ final class EmulatorController: ObservableObject {
     let logStore = LogStore()
 
     private var handle: OpaquePointer?
+    private var audioOutput: AudioOutput?
     private let runQueue = DispatchQueue(label: "ymir.emu.run", qos: .userInitiated)
     private let runStateLock = NSLock()
     private var runningInternal = false
@@ -32,6 +34,9 @@ final class EmulatorController: ObservableObject {
         if let handle = handle {
             let userData = Unmanaged.passUnretained(self).toOpaque()
             ymir_set_log_callback(handle, ymirLogCallback, userData)
+            audioOutput = AudioOutput(handle: handle) { [weak self] level, message in
+                self?.logStore.append(level: level, message: message)
+            }
             if let version = ymir_get_version_string() {
                 logStore.append(level: .info, message: "Ymir core ready (\(String(cString: version)))")
             }
@@ -44,6 +49,8 @@ final class EmulatorController: ObservableObject {
         stop()
         runQueue.sync {
         }
+        audioOutput?.stop()
+        audioOutput = nil
         if let handle = handle {
             ymir_set_log_callback(handle, nil, nil)
             ymir_destroy(handle)
@@ -118,14 +125,24 @@ final class EmulatorController: ObservableObject {
                 return
             }
             self.logStore.append(level: .info, message: "Emulation reset")
+            self.audioOutput?.start()
             self.setRunningInternal(true)
             DispatchQueue.main.async { [weak self] in
                 self?.isRunning = true
                 self?.statusText = "Running"
             }
+            let frameDuration = 1.0 / 60.0
+            var nextFrameTime = CACurrentMediaTime()
             while self.isRunningInternal() {
                 ymir_run_frame(handle)
-                Thread.sleep(forTimeInterval: 1.0 / 60.0)
+                nextFrameTime += frameDuration
+                let now = CACurrentMediaTime()
+                let sleepTime = nextFrameTime - now
+                if sleepTime > 0 {
+                    Thread.sleep(forTimeInterval: sleepTime)
+                } else if sleepTime < -frameDuration {
+                    nextFrameTime = now
+                }
             }
             DispatchQueue.main.async { [weak self] in
                 if self?.isRunning == true {
@@ -133,6 +150,7 @@ final class EmulatorController: ObservableObject {
                     self?.statusText = "Stopped"
                 }
             }
+            self.audioOutput?.stop()
         }
     }
 
@@ -141,6 +159,7 @@ final class EmulatorController: ObservableObject {
             return
         }
         setRunningInternal(false)
+        audioOutput?.stop()
         DispatchQueue.main.async { [weak self] in
             self?.isRunning = false
             self?.statusText = "Stopped"
@@ -164,6 +183,13 @@ final class EmulatorController: ObservableObject {
         }
         let result = ymir_copy_framebuffer(handle, buffer, byteCount, &info, &frameId)
         return result == YMIR_RESULT_OK
+    }
+
+    func setControlPadButtons(_ buttons: UInt16, port: UInt32 = 1) {
+        guard let handle = handle else {
+            return
+        }
+        _ = ymir_set_control_pad_buttons(handle, port, buttons)
     }
 
     private func setRunningInternal(_ value: Bool) {
