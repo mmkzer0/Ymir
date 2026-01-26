@@ -1,11 +1,14 @@
 #include <ymir/ymir_c.h>
 
+#include <ymir/hw/smpc/peripheral/peripheral_report.hpp>
+#include <ymir/hw/scsp/scsp_defs.hpp>
 #include <ymir/sys/saturn.hpp>
 #include <ymir/util/dev_log.hpp>
 #include <ymir/version.hpp>
 
 #include <fmt/format.h>
 
+#include <atomic>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -17,6 +20,28 @@
 #include <string>
 #include <vector>
 
+struct ymir_handle;
+
+struct InputCallbackContext {
+    ymir_handle *handle = nullptr;
+    uint8 port_index = 0;
+};
+
+constexpr uint32 kAudioBufferFrames = 16384u;
+constexpr uint32 kAudioBufferMask = kAudioBufferFrames - 1u;
+static_assert((kAudioBufferFrames & kAudioBufferMask) == 0u, "Audio buffer size must be a power of two.");
+
+struct AudioRingBuffer {
+    std::array<sint16, kAudioBufferFrames * 2u> samples{};
+    std::atomic<uint32> write_index{0};
+    std::atomic<uint32> read_index{0};
+
+    void Clear() {
+        write_index.store(0, std::memory_order_relaxed);
+        read_index.store(0, std::memory_order_relaxed);
+    }
+};
+
 // handle struct 
 // basically a saturn instance + related data (for now)
 struct ymir_handle {
@@ -24,6 +49,9 @@ struct ymir_handle {
     ymir_log_callback_t log_callback = nullptr;
     void *log_user_data = nullptr;
     std::string last_error;
+    std::array<std::atomic<uint16>, 2> control_pad_release_mask;
+    std::array<InputCallbackContext, 2> input_callback_contexts;
+    AudioRingBuffer audio_buffer;
     std::mutex framebuffer_mutex;
     std::vector<uint32> framebuffer;
     uint32 framebuffer_width = 0;
@@ -33,6 +61,8 @@ struct ymir_handle {
 };
 
 namespace {
+
+constexpr uint16 kControlPadButtonMask = static_cast<uint16>(ymir::peripheral::Button::All);
 
 // switch devlog level to enum
 ymir_log_level_t ToLogLevel(devlog::Level level) {
@@ -49,6 +79,49 @@ ymir_log_level_t ToLogLevel(devlog::Level level) {
             return YMIR_LOG_LEVEL_ERROR;
         default:
             return YMIR_LOG_LEVEL_INFO;
+    }
+}
+
+void AudioSampleCallback(sint16 left, sint16 right, void *ctx) {
+    auto *handle = static_cast<ymir_handle *>(ctx);
+    if (handle == nullptr) {
+        return;
+    }
+    auto &buffer = handle->audio_buffer;
+    const uint32 write = buffer.write_index.load(std::memory_order_relaxed);
+    const uint32 next = (write + 1u) & kAudioBufferMask;
+    uint32 read = buffer.read_index.load(std::memory_order_acquire);
+    if (next == read) {
+        read = (read + 1u) & kAudioBufferMask;
+        buffer.read_index.store(read, std::memory_order_release);
+    }
+    const size_t base = static_cast<size_t>(write) * 2u;
+    buffer.samples[base] = left;
+    buffer.samples[base + 1u] = right;
+    buffer.write_index.store(next, std::memory_order_release);
+}
+
+void PeripheralReportCallback(ymir::peripheral::PeripheralReport &report, void *ctx) {
+    auto *context = static_cast<InputCallbackContext *>(ctx);
+    if (context == nullptr) {
+        return;
+    }
+    if (context->handle == nullptr) {
+        return;
+    }
+    const size_t port_index = context->port_index;
+    if (port_index >= context->handle->control_pad_release_mask.size()) {
+        return;
+    }
+    switch (report.type) {
+    case ymir::peripheral::PeripheralType::ControlPad: {
+        const uint16 release_mask = context->handle->control_pad_release_mask[port_index].load(
+            std::memory_order_relaxed);
+        report.report.controlPad.buttons = static_cast<ymir::peripheral::Button>(release_mask);
+        break;
+    }
+    default:
+        break;
     }
 }
 
@@ -122,6 +195,18 @@ ymir_handle_t *ymir_create(const ymir_config_t *config) {
 
     try {
         auto *handle = new ymir_handle();
+        handle->control_pad_release_mask[0].store(kControlPadButtonMask, std::memory_order_relaxed);
+        handle->control_pad_release_mask[1].store(kControlPadButtonMask, std::memory_order_relaxed);
+        handle->input_callback_contexts[0] = {handle, 0};
+        handle->input_callback_contexts[1] = {handle, 1};
+        auto &port1 = handle->saturn.SMPC.GetPeripheralPort1();
+        port1.ConnectControlPad();
+        port1.SetPeripheralReportCallback({&handle->input_callback_contexts[0], &PeripheralReportCallback});
+        auto &port2 = handle->saturn.SMPC.GetPeripheralPort2();
+        port2.ConnectControlPad();
+        port2.SetPeripheralReportCallback({&handle->input_callback_contexts[1], &PeripheralReportCallback});
+        handle->audio_buffer.Clear();
+        handle->saturn.SCSP.SetSampleCallback({handle, &AudioSampleCallback});
         handle->saturn.VDP.SetRenderCallback({handle, &FrameCompleteCallback});
         return handle;
     } catch (const std::exception &) {
@@ -133,6 +218,9 @@ ymir_handle_t *ymir_create(const ymir_config_t *config) {
 void ymir_destroy(ymir_handle_t *handle) {
     if (handle != nullptr) {
         handle->saturn.VDP.SetRenderCallback({});
+        handle->saturn.SCSP.SetSampleCallback({});
+        handle->saturn.SMPC.GetPeripheralPort1().SetPeripheralReportCallback({});
+        handle->saturn.SMPC.GetPeripheralPort2().SetPeripheralReportCallback({});
         const auto sink_state = devlog::GetLogSink();
         if (sink_state.sink == &DevLogSink && sink_state.user_data == handle) {
             devlog::SetLogSink(nullptr, nullptr);
@@ -222,12 +310,71 @@ ymir_result_t ymir_reset(ymir_handle_t *handle, bool hard_reset) {
             handle->framebuffer_ready = false;
             handle->framebuffer_frame_id = 0;
         }
+        handle->audio_buffer.Clear();
         ClearLastError(handle);
         return YMIR_RESULT_OK;
     } catch (const std::exception &ex) {
         SetLastError(handle, YMIR_LOG_LEVEL_ERROR, fmt::format("Exception while resetting: {}", ex.what()));
         return YMIR_RESULT_INTERNAL_ERROR;
     }
+}
+
+ymir_result_t ymir_set_control_pad_buttons(ymir_handle_t *handle, uint32_t port, uint16_t pressed_buttons) {
+    if (handle == nullptr) {
+        return YMIR_RESULT_INVALID_ARGUMENT;
+    }
+    if (port < 1 || port > 2) {
+        return YMIR_RESULT_INVALID_ARGUMENT;
+    }
+
+    const size_t port_index = port - 1;
+    const uint16 pressed_mask = static_cast<uint16>(pressed_buttons) & kControlPadButtonMask;
+    const uint16 release_mask = static_cast<uint16>(kControlPadButtonMask &
+                                                    static_cast<uint16>(~pressed_mask));
+    handle->control_pad_release_mask[port_index].store(release_mask, std::memory_order_relaxed);
+    return YMIR_RESULT_OK;
+}
+
+void ymir_get_audio_info(ymir_handle_t *handle, ymir_audio_info_t *out_info) {
+    // API returns audio stream description (format defined by core)
+    // Caller uses info to configure audio output pipeline 
+
+    // not used for now -> possible future per handle audio config
+    // cast to void silencing 'unused param' warnings
+    static_cast<void>(handle);
+
+    // early return on no audio info provided
+    if (out_info == nullptr) {
+        return;
+    }
+
+    // init to known safe state first
+    // avoids partially filled dater later should we early-out
+    *out_info = ymir_audio_info_t{};
+
+    // set core defaults for 
+    out_info->sample_rate = static_cast<uint32_t>(ymir::scsp::kAudioFreq);
+    out_info->channels = 2u;                    // Stereo out
+    out_info->format = YMIR_AUDIO_FORMAT_S16;   // Signed 16-bit PCM
+}
+
+size_t ymir_read_audio_samples(ymir_handle_t *handle, int16_t *out_samples, size_t max_frames) {
+    if (handle == nullptr || out_samples == nullptr || max_frames == 0) {
+        return 0;
+    }
+    auto &buffer = handle->audio_buffer;
+    const uint32 write = buffer.write_index.load(std::memory_order_acquire);
+    uint32 read = buffer.read_index.load(std::memory_order_relaxed);
+    const uint32 available = (write - read) & kAudioBufferMask;
+    const uint32 frames_to_read = std::min<uint32>(static_cast<uint32>(max_frames), available);
+    for (uint32 i = 0; i < frames_to_read; ++i) {
+        const size_t base = static_cast<size_t>(read) * 2u;
+        out_samples[i * 2u] = buffer.samples[base];
+        out_samples[i * 2u + 1u] = buffer.samples[base + 1u];
+        read = (read + 1u) & kAudioBufferMask;
+    }
+    buffer.read_index.store(read, std::memory_order_release);
+    return frames_to_read;
 }
 
 uint64_t ymir_step_master_sh2(ymir_handle_t *handle) {
