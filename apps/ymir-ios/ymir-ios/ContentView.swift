@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -19,6 +20,7 @@ struct ContentView: View {
 
     @State private var showImporter = false
     @StateObject private var inputCoordinator: InputCoordinator
+    private let audioRefreshTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     init(emulator: EmulatorController, logStore: LogStore) {
         self.emulator = emulator
@@ -27,20 +29,24 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [AppColors.backgroundTop, AppColors.backgroundBottom],
-                           startPoint: .topLeading,
-                           endPoint: .bottomTrailing)
-                .ignoresSafeArea()
+        TabView {
+            homeScreen
+                .tabItem {
+                    Label("Home", systemImage: "house")
+                }
 
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                statusCard
-                controls
-                videoPanel
-                logPanel
-            }
-            .padding(20)
+            videoScreen
+                .tabItem {
+                    Label("Video", systemImage: "rectangle.on.rectangle")
+                }
+
+            consoleScreen
+                .tabItem {
+                    Label("Console", systemImage: "terminal")
+                }
+        }
+        .onReceive(audioRefreshTimer) { _ in
+            emulator.refreshAudioBufferState()
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType.data],
@@ -190,6 +196,86 @@ struct ContentView: View {
 }
 
 private extension ContentView {
+    var homeScreen: some View {
+        screenContainer {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                statusCard
+                controls
+                audioPanel
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    var videoScreen: some View {
+        screenContainer {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                statusCard
+                videoPanel
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    var consoleScreen: some View {
+        screenContainer {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                statusCard
+                logPanel
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    func screenContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ZStack {
+            LinearGradient(colors: [AppColors.backgroundTop, AppColors.backgroundBottom],
+                           startPoint: .topLeading,
+                           endPoint: .bottomTrailing)
+                .ignoresSafeArea()
+
+            content()
+                .padding(20)
+        }
+    }
+
+    var audioPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Audio")
+                        .font(.custom("AvenirNext-DemiBold", size: 12))
+                        .foregroundStyle(Color.black.opacity(0.6))
+                    Text(emulator.audioEnabled ? "Enabled" : "Muted")
+                        .font(.custom("AvenirNext-Bold", size: 14))
+                        .foregroundStyle(AppColors.panel)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: Binding(get: {
+                    emulator.audioEnabled
+                }, set: { value in
+                    emulator.setAudioEnabled(value)
+                }))
+                .labelsHidden()
+                .toggleStyle(SwitchToggleStyle(tint: AppColors.accent))
+            }
+
+            AudioMeter(fill: emulator.audioBufferFill,
+                       queued: emulator.audioQueuedFrames,
+                       capacity: emulator.audioCapacityFrames)
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
     var videoPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Video")
@@ -237,6 +323,32 @@ private struct LogRow: View {
                 .foregroundStyle(AppColors.panelText)
                 .lineLimit(nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct AudioMeter: View {
+    let fill: Double
+    let queued: Int
+    let capacity: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { geo in
+                let clampedFill = min(max(fill, 0.0), 1.0)
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.black.opacity(0.08))
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(AppColors.accent)
+                        .frame(width: geo.size.width * CGFloat(clampedFill))
+                }
+            }
+            .frame(height: 8)
+
+            Text(capacity > 0 ? "\(queued)/\(capacity) frames" : "No audio data")
+                .font(.custom("AvenirNext-Regular", size: 11))
+                .foregroundStyle(Color.black.opacity(0.5))
         }
     }
 }

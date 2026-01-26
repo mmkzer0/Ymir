@@ -79,6 +79,11 @@ typedef struct ymir_audio_info {
     ymir_audio_format_t format;
 } ymir_audio_info_t;
 
+typedef struct ymir_audio_buffer_state {
+    uint32_t queued_frames;
+    uint32_t capacity_frames;
+} ymir_audio_buffer_state_t;
+
 typedef struct ymir_framebuffer_info {
     uint32_t width;
     uint32_t height;
@@ -94,6 +99,7 @@ YMIR_CORE_EXPORT ymir_result_t ymir_set_control_pad_buttons(ymir_handle_t *handl
                                                             uint16_t pressed_buttons);
 
 YMIR_CORE_EXPORT void ymir_get_audio_info(ymir_handle_t *handle, ymir_audio_info_t *out_info);
+YMIR_CORE_EXPORT void ymir_get_audio_buffer_state(ymir_handle_t *handle, ymir_audio_buffer_state_t *out_state);
 // Returns the number of frames read. Output is interleaved, stereo, S16.
 YMIR_CORE_EXPORT size_t ymir_read_audio_samples(ymir_handle_t *handle, int16_t *out_samples, size_t max_frames);
 
