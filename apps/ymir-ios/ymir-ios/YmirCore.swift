@@ -18,6 +18,10 @@ final class EmulatorController: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var statusText = "Idle"
     @Published private(set) var iplName = "No IPL loaded"
+    @Published private(set) var audioEnabled = true
+    @Published private(set) var audioBufferFill: Double = 0.0
+    @Published private(set) var audioQueuedFrames = 0
+    @Published private(set) var audioCapacityFrames = 0
 
     let logStore = LogStore()
 
@@ -37,6 +41,7 @@ final class EmulatorController: ObservableObject {
             audioOutput = AudioOutput(handle: handle) { [weak self] level, message in
                 self?.logStore.append(level: level, message: message)
             }
+            audioOutput?.setMuted(!audioEnabled)
             if let version = ymir_get_version_string() {
                 logStore.append(level: .info, message: "Ymir core ready (\(String(cString: version)))")
             }
@@ -126,6 +131,7 @@ final class EmulatorController: ObservableObject {
             }
             self.logStore.append(level: .info, message: "Emulation reset")
             self.audioOutput?.start()
+            self.audioOutput?.setMuted(!self.audioEnabled)
             self.setRunningInternal(true)
             DispatchQueue.main.async { [weak self] in
                 self?.isRunning = true
@@ -135,6 +141,7 @@ final class EmulatorController: ObservableObject {
             var nextFrameTime = CACurrentMediaTime()
             while self.isRunningInternal() {
                 ymir_run_frame(handle)
+                self.applyAudioBackpressure(handle)
                 nextFrameTime += frameDuration
                 let now = CACurrentMediaTime()
                 let sleepTime = nextFrameTime - now
@@ -163,6 +170,65 @@ final class EmulatorController: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.isRunning = false
             self?.statusText = "Stopped"
+        }
+    }
+
+    func setAudioEnabled(_ enabled: Bool) {
+        if enabled == audioEnabled {
+            return
+        }
+        audioEnabled = enabled
+        audioOutput?.setMuted(!enabled)
+    }
+
+    func refreshAudioBufferState() {
+        guard let handle = handle else {
+            return
+        }
+        var state = ymir_audio_buffer_state_t(queued_frames: 0, capacity_frames: 0)
+        ymir_get_audio_buffer_state(handle, &state)
+        let capacity = Int(state.capacity_frames)
+        let queued = Int(state.queued_frames)
+        let fill = capacity > 0 ? Double(queued) / Double(capacity) : 0.0
+        if Thread.isMainThread {
+            audioCapacityFrames = capacity
+            audioQueuedFrames = queued
+            audioBufferFill = fill
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.audioCapacityFrames = capacity
+                self?.audioQueuedFrames = queued
+                self?.audioBufferFill = fill
+            }
+        }
+    }
+
+    private func applyAudioBackpressure(_ handle: OpaquePointer) {
+        guard let output = audioOutput, output.isRunning else {
+            return
+        }
+
+        var state = ymir_audio_buffer_state_t(queued_frames: 0, capacity_frames: 0)
+        ymir_get_audio_buffer_state(handle, &state)
+
+        let capacity = Int(state.capacity_frames)
+        if capacity <= 0 {
+            return
+        }
+
+        let maxFrames = Int(Double(capacity) * 0.35)
+        let targetFrames = Int(Double(capacity) * 0.25)
+        var queued = Int(state.queued_frames)
+        var loops = 0
+
+        while queued > maxFrames && loops < 8 {
+            Thread.sleep(forTimeInterval: 0.001)
+            ymir_get_audio_buffer_state(handle, &state)
+            queued = Int(state.queued_frames)
+            if queued <= targetFrames {
+                break
+            }
+            loops += 1
         }
     }
 

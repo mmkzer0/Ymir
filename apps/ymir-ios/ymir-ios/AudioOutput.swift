@@ -5,7 +5,11 @@ final class AudioOutput {
     private let log: (LogLevel, String) -> Void
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
-    private var isRunning = false
+    private var engineRunning = false
+    private var desiredActive = false
+    private var wasInterrupted = false
+    private var notificationTokens: [NSObjectProtocol] = []
+    private var isMuted = false
 
     private let sampleRate: Double
     private let channels: AVAudioChannelCount = 2
@@ -25,15 +29,25 @@ final class AudioOutput {
 
         scratch = UnsafeMutablePointer<Int16>.allocate(capacity: scratchFrames * 2)
         scratch.initialize(repeating: 0, count: scratchFrames * 2)
+
+        setupNotifications()
     }
 
     deinit {
+        for token in notificationTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
         scratch.deinitialize(count: scratchFrames * 2)
         scratch.deallocate()
     }
 
+    var isRunning: Bool {
+        engineRunning
+    }
+
     func start() {
-        if isRunning {
+        desiredActive = true
+        if engineRunning {
             return
         }
         do {
@@ -66,14 +80,28 @@ final class AudioOutput {
 
         do {
             try engine.start()
-            isRunning = true
+            engineRunning = true
         } catch {
             log(.error, "Failed to start audio engine: \(error.localizedDescription)")
         }
+        applyMuteState()
     }
 
     func stop() {
-        if !isRunning {
+        desiredActive = false
+        stopEngine()
+    }
+
+    func setMuted(_ muted: Bool) {
+        if muted == isMuted {
+            return
+        }
+        isMuted = muted
+        applyMuteState()
+    }
+
+    private func stopEngine() {
+        if !engineRunning {
             return
         }
         engine.stop()
@@ -81,7 +109,7 @@ final class AudioOutput {
             engine.detach(node)
             sourceNode = nil
         }
-        isRunning = false
+        engineRunning = false
     }
 
     private func render(frameCount: AVAudioFrameCount, bufferList: UnsafeMutablePointer<AudioBufferList>) {
@@ -126,5 +154,54 @@ final class AudioOutput {
         try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try session.setPreferredSampleRate(sampleRate)
         try session.setActive(true, options: [])
+    }
+
+    private func applyMuteState() {
+        let volume: Float = isMuted ? 0.0 : 1.0
+        engine.mainMixerNode.outputVolume = volume
+    }
+
+    private func setupNotifications() {
+        let center = NotificationCenter.default
+        let interruptionToken = center.addObserver(forName: AVAudioSession.interruptionNotification,
+                                                   object: nil,
+                                                   queue: .main) { [weak self] notification in
+            self?.handleInterruption(notification)
+        }
+        let mediaResetToken = center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification,
+                                                 object: nil,
+                                                 queue: .main) { [weak self] _ in
+            self?.handleMediaServicesReset()
+        }
+        notificationTokens = [interruptionToken, mediaResetToken]
+    }
+
+    private func handleInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .began:
+            wasInterrupted = engineRunning
+            stopEngine()
+        case .ended:
+            let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if desiredActive && (options.contains(.shouldResume) || wasInterrupted) {
+                start()
+            }
+            wasInterrupted = false
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleMediaServicesReset() {
+        if desiredActive {
+            start()
+        }
     }
 }
