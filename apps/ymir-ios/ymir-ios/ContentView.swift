@@ -18,6 +18,13 @@ struct ContentView: View {
     @ObservedObject var logStore: LogStore
 
     @State private var showImporter = false
+    @StateObject private var inputCoordinator: InputCoordinator
+
+    init(emulator: EmulatorController, logStore: LogStore) {
+        self.emulator = emulator
+        self.logStore = logStore
+        _inputCoordinator = StateObject(wrappedValue: InputCoordinator(emulator: emulator))
+    }
 
     var body: some View {
         ZStack {
@@ -189,11 +196,16 @@ private extension ContentView {
                 .font(.custom("AvenirNext-DemiBold", size: 12))
                 .foregroundStyle(AppColors.panelText.opacity(0.7))
 
-            MetalFramebufferView(emulator: emulator)
-                .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .background(Color.black.opacity(0.9))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+            ZStack {
+                MetalFramebufferView(emulator: emulator)
+                TouchControlOverlay(input: inputCoordinator)
+                    .allowsHitTesting(inputCoordinator.showTouchOverlay)
+                    .animation(.easeInOut(duration: 0.2), value: inputCoordinator.showTouchOverlay)
+            }
+            .aspectRatio(4.0 / 3.0, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .background(Color.black.opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .padding(14)
         .background(AppColors.panel)
