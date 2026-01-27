@@ -5,6 +5,7 @@ final class AudioOutput {
     private let log: (LogLevel, String) -> Void
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+    private let stateLock = NSLock()
     private var engineRunning = false
     private var desiredActive = false
     private var wasInterrupted = false
@@ -42,12 +43,18 @@ final class AudioOutput {
     }
 
     var isRunning: Bool {
-        engineRunning
+        stateLock.lock()
+        let value = engineRunning
+        stateLock.unlock()
+        return value
     }
 
     func start() {
+        stateLock.lock()
         desiredActive = true
-        if engineRunning {
+        let alreadyRunning = engineRunning
+        stateLock.unlock()
+        if alreadyRunning {
             return
         }
         do {
@@ -80,7 +87,9 @@ final class AudioOutput {
 
         do {
             try engine.start()
+            stateLock.lock()
             engineRunning = true
+            stateLock.unlock()
         } catch {
             log(.error, "Failed to start audio engine: \(error.localizedDescription)")
         }
@@ -93,15 +102,21 @@ final class AudioOutput {
     }
 
     func setMuted(_ muted: Bool) {
-        if muted == isMuted {
+        stateLock.lock()
+        let shouldUpdate = muted != isMuted
+        isMuted = muted
+        stateLock.unlock()
+        if !shouldUpdate {
             return
         }
-        isMuted = muted
         applyMuteState()
     }
 
     private func stopEngine() {
-        if !engineRunning {
+        stateLock.lock()
+        let running = engineRunning
+        stateLock.unlock()
+        if !running {
             return
         }
         engine.stop()
@@ -109,7 +124,9 @@ final class AudioOutput {
             engine.detach(node)
             sourceNode = nil
         }
+        stateLock.lock()
         engineRunning = false
+        stateLock.unlock()
     }
 
     private func render(frameCount: AVAudioFrameCount, bufferList: UnsafeMutablePointer<AudioBufferList>) {
@@ -157,7 +174,10 @@ final class AudioOutput {
     }
 
     private func applyMuteState() {
-        let volume: Float = isMuted ? 0.0 : 1.0
+        stateLock.lock()
+        let muted = isMuted
+        stateLock.unlock()
+        let volume: Float = muted ? 0.0 : 1.0
         engine.mainMixerNode.outputVolume = volume
     }
 
@@ -185,22 +205,30 @@ final class AudioOutput {
 
         switch type {
         case .began:
+            stateLock.lock()
             wasInterrupted = engineRunning
+            stateLock.unlock()
             stopEngine()
         case .ended:
             let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
             let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
-            if desiredActive && (options.contains(.shouldResume) || wasInterrupted) {
+            stateLock.lock()
+            let shouldResume = desiredActive && (options.contains(.shouldResume) || wasInterrupted)
+            wasInterrupted = false
+            stateLock.unlock()
+            if shouldResume {
                 start()
             }
-            wasInterrupted = false
         @unknown default:
             break
         }
     }
 
     private func handleMediaServicesReset() {
-        if desiredActive {
+        stateLock.lock()
+        let shouldRestart = desiredActive
+        stateLock.unlock()
+        if shouldRestart {
             start()
         }
     }
