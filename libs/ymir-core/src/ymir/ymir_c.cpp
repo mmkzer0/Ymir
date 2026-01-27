@@ -15,22 +15,27 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <span>
 #include <string>
 #include <vector>
 
+// opaque handle struct
 struct ymir_handle;
 
+// input callback struct
 struct InputCallbackContext {
     ymir_handle *handle = nullptr;
     uint8 port_index = 0;
 };
 
+// audio constants
 constexpr uint32 kAudioBufferFrames = 16384u;
 constexpr uint32 kAudioBufferMask = kAudioBufferFrames - 1u;
 static_assert((kAudioBufferFrames & kAudioBufferMask) == 0u, "Audio buffer size must be a power of two.");
 
+// audio ring buffer
 struct AudioRingBuffer {
     std::array<sint16, kAudioBufferFrames * 2u> samples{};
     std::atomic<uint32> write_index{0};
@@ -44,27 +49,38 @@ struct AudioRingBuffer {
 
 // handle struct 
 // basically a saturn instance + related data (for now)
+// TODO: group datastructures in contexts by affiliation
 struct ymir_handle {
-    ymir::Saturn saturn;
-    ymir_log_callback_t log_callback = nullptr;
-    void *log_user_data = nullptr;
-    std::string last_error;
-    std::array<std::atomic<uint16>, 2> control_pad_release_mask;
-    std::array<InputCallbackContext, 2> input_callback_contexts;
-    AudioRingBuffer audio_buffer;
-    std::mutex framebuffer_mutex;
-    std::vector<uint32> framebuffer;
-    uint32 framebuffer_width = 0;
-    uint32 framebuffer_height = 0;
-    uint64 framebuffer_frame_id = 0;
-    bool framebuffer_ready = false;
+    // Saturn
+    ymir::Saturn saturn;    // Saturn instance
+    ymir_log_callback_t log_callback = nullptr;     // log callback ptr
+    void *log_user_data = nullptr;                  // log data ptr
+
+    // Error Handling
+    std::string last_error; // last error string
+
+    // Input
+    std::array<std::atomic<uint16>, 2> control_pad_release_mask;    // gamepad mask
+    std::array<InputCallbackContext, 2> input_callback_contexts;    // input callback
+
+    // Audio
+    AudioRingBuffer audio_buffer;       // audio ringbuffer
+
+    // Video
+    std::mutex framebuffer_mutex;       // fb mutex
+    std::vector<uint32> framebuffer;    // framebuffer
+    uint32 framebuffer_width = 0;       // fb width
+    uint32 framebuffer_height = 0;      // fb height
+    uint64 framebuffer_frame_id = 0;    // fb frame id
+    bool framebuffer_ready = false;     // fb ready
 };
 
 namespace {
 
+// gamepad button mask derived from Button::All
 constexpr uint16 kControlPadButtonMask = static_cast<uint16>(ymir::peripheral::Button::All);
 
-// switch devlog level to enum
+// switch internal devlog level to API enum
 ymir_log_level_t ToLogLevel(devlog::Level level) {
     switch (level) {
         case devlog::level::trace:
@@ -79,6 +95,97 @@ ymir_log_level_t ToLogLevel(devlog::Level level) {
             return YMIR_LOG_LEVEL_ERROR;
         default:
             return YMIR_LOG_LEVEL_INFO;
+    }
+}
+
+void DevLogSink(devlog::Level level, const char *message, void *user_data);
+
+// Registry is global to the C API so multiple handles can subscribe to devlog fanout.
+struct LogSubscriber {
+    std::atomic<bool> active{true};             // handle if active
+    ymir_handle *handle = nullptr;              // emulation instance handle
+    ymir_log_callback_t callback = nullptr;     // associated log callback
+    void *user_data = nullptr;                  // user data
+};
+
+struct LogRegistry {
+    std::mutex mutex;
+    std::vector<std::shared_ptr<LogSubscriber>> subscribers;
+};
+
+LogRegistry &GetLogRegistry() {
+    static LogRegistry registry;
+    return registry;
+}
+
+auto FindSubscriber(LogRegistry &registry, ymir_handle *handle) {
+    return std::find_if(registry.subscribers.begin(), registry.subscribers.end(),
+                        [handle](const std::shared_ptr<LogSubscriber> &entry) {
+                            return entry->handle == handle;
+                        });
+}
+
+void UpdateDevLogSink(bool enable) {
+    if (enable) {
+        devlog::SetLogSink(&DevLogSink, nullptr);
+    } else {
+        devlog::SetLogSink(nullptr, nullptr);
+    }
+}
+
+void RegisterLogCallback(ymir_handle *handle, ymir_log_callback_t callback, void *user_data) {
+    if (handle == nullptr) {
+        return;
+    }
+    auto &registry = GetLogRegistry();
+    bool has_subscribers = false;
+    {
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        auto it = FindSubscriber(registry, handle);
+        if (callback == nullptr) {
+            if (it != registry.subscribers.end()) {
+                (*it)->active.store(false, std::memory_order_release);
+                registry.subscribers.erase(it);
+            }
+        } else {
+            auto entry = std::make_shared<LogSubscriber>();
+            entry->handle = handle;
+            entry->callback = callback;
+            entry->user_data = user_data;
+            if (it != registry.subscribers.end()) {
+                (*it)->active.store(false, std::memory_order_release);
+                *it = std::move(entry);
+            } else {
+                registry.subscribers.push_back(std::move(entry));
+            }
+        }
+        has_subscribers = !registry.subscribers.empty();
+    }
+    UpdateDevLogSink(has_subscribers);
+}
+
+// invoke callback to log level /w message
+void DevLogSink(devlog::Level level, const char *message, void *user_data) {
+    static_cast<void>(user_data);
+    auto &registry = GetLogRegistry();
+    std::vector<std::shared_ptr<LogSubscriber>> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        // Snapshot the list so callbacks can run without holding the registry lock.
+        snapshot = registry.subscribers;
+    }
+    if (snapshot.empty()) {
+        return;
+    }
+    const auto mapped_level = ToLogLevel(level);
+    for (const auto &entry : snapshot) {
+        if (!entry->active.load(std::memory_order_acquire)) {
+            continue;
+        }
+        if (entry->callback == nullptr) {
+            continue;
+        }
+        entry->callback(entry->user_data, mapped_level, message);
     }
 }
 
@@ -123,18 +230,6 @@ void PeripheralReportCallback(ymir::peripheral::PeripheralReport &report, void *
     default:
         break;
     }
-}
-
-// invoke callback to log level /w message
-void DevLogSink(devlog::Level level, const char *message, void *user_data) {
-    auto *handle = static_cast<ymir_handle *>(user_data);
-    if (handle == nullptr) {
-        return;
-    }
-    if (handle->log_callback == nullptr) {
-        return;
-    }
-    handle->log_callback(handle->log_user_data, ToLogLevel(level), message);
 }
 
 // render callback
@@ -217,14 +312,11 @@ ymir_handle_t *ymir_create(const ymir_config_t *config) {
 // destroys emulation instance, resets log sink, then destroys handle
 void ymir_destroy(ymir_handle_t *handle) {
     if (handle != nullptr) {
+        RegisterLogCallback(handle, nullptr, nullptr);
         handle->saturn.VDP.SetRenderCallback({});
         handle->saturn.SCSP.SetSampleCallback({});
         handle->saturn.SMPC.GetPeripheralPort1().SetPeripheralReportCallback({});
         handle->saturn.SMPC.GetPeripheralPort2().SetPeripheralReportCallback({});
-        const auto sink_state = devlog::GetLogSink();
-        if (sink_state.sink == &DevLogSink && sink_state.user_data == handle) {
-            devlog::SetLogSink(nullptr, nullptr);
-        }
     }
     delete handle;
 }
@@ -235,14 +327,7 @@ void ymir_set_log_callback(ymir_handle_t *handle, ymir_log_callback_t callback, 
     }
     handle->log_callback = callback;
     handle->log_user_data = user_data;
-    if (callback != nullptr) {
-        devlog::SetLogSink(&DevLogSink, handle);
-    } else {
-        const auto sink_state = devlog::GetLogSink();
-        if (sink_state.sink == &DevLogSink && sink_state.user_data == handle) {
-            devlog::SetLogSink(nullptr, nullptr);
-        }
-    }
+    RegisterLogCallback(handle, callback, user_data);
 }
 
 // set ipl path of instance from path
