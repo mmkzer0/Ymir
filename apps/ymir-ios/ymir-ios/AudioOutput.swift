@@ -1,10 +1,14 @@
 import AVFoundation
 
+// MARK: - Audio output (AVAudioEngine)
+
 final class AudioOutput {
     private let handle: OpaquePointer
     private let log: (LogLevel, String) -> Void
     private let engine = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+
+    // Audio output can be accessed from the emu thread + interruption callbacks
     private let stateLock = NSLock()
     private var engineRunning = false
     private var desiredActive = false
@@ -12,8 +16,11 @@ final class AudioOutput {
     private var notificationTokens: [NSObjectProtocol] = []
     private var isMuted = false
 
+    // Core audio format is fixed (S16, stereo, 44.1 kHz)
     private let sampleRate: Double
     private let channels: AVAudioChannelCount = 2
+
+    // Scratch buffer holds interleaved S16 samples from the core
     private let scratchFrames = 4096
     private let scratch: UnsafeMutablePointer<Int16>
 
@@ -42,12 +49,16 @@ final class AudioOutput {
         scratch.deallocate()
     }
 
+    // MARK: State
+
     var isRunning: Bool {
         stateLock.lock()
         let value = engineRunning
         stateLock.unlock()
         return value
     }
+
+    // MARK: Public control
 
     func start() {
         stateLock.lock()
@@ -72,6 +83,7 @@ final class AudioOutput {
             return
         }
 
+        // Pull-based render callback: asks the core for audio frames
         let node = AVAudioSourceNode(format: format) { [weak self] _, _, frameCount, bufferList in
             guard let self = self else {
                 return noErr
@@ -112,6 +124,8 @@ final class AudioOutput {
         applyMuteState()
     }
 
+    // MARK: Engine helpers
+
     private func stopEngine() {
         stateLock.lock()
         let running = engineRunning
@@ -136,6 +150,7 @@ final class AudioOutput {
             return
         }
         if frames > scratchFrames {
+            // Defensive: if the system asks for more than we can stage, output silence
             for buffer in buffers {
                 if let data = buffer.mData {
                     memset(data, 0, Int(buffer.mDataByteSize))
@@ -159,6 +174,7 @@ final class AudioOutput {
         }
 
         if framesRead < frames {
+            // Underrun: zero-fill the remainder
             for i in framesRead..<frames {
                 left[i] = 0
                 right[i] = 0
@@ -180,6 +196,8 @@ final class AudioOutput {
         let volume: Float = muted ? 0.0 : 1.0
         engine.mainMixerNode.outputVolume = volume
     }
+
+    // MARK: Notifications
 
     private func setupNotifications() {
         let center = NotificationCenter.default
@@ -205,6 +223,7 @@ final class AudioOutput {
 
         switch type {
         case .began:
+            // Stop immediately to release the audio device during interruptions
             stateLock.lock()
             wasInterrupted = engineRunning
             stateLock.unlock()
