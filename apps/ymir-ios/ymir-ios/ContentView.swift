@@ -1,4 +1,3 @@
-import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -20,7 +19,6 @@ struct ContentView: View {
 
     @State private var showImporter = false
     @StateObject private var inputCoordinator: InputCoordinator
-    private let audioRefreshTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     init(emulator: EmulatorController, logStore: LogStore) {
         self.emulator = emulator
@@ -44,9 +42,6 @@ struct ContentView: View {
                 .tabItem {
                     Label("Console", systemImage: "terminal")
                 }
-        }
-        .onReceive(audioRefreshTimer) { _ in
-            emulator.refreshAudioBufferState()
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType.data],
