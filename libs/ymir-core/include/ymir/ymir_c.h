@@ -43,7 +43,8 @@ typedef struct ymir_config {
 YMIR_CORE_EXPORT ymir_handle_t *ymir_create(const ymir_config_t *config);
 YMIR_CORE_EXPORT void ymir_destroy(ymir_handle_t *handle);
 
-// Note: devlog output is global; the most recently set callback receives it.
+// Note: devlog output is global; all registered callbacks receive it.
+// Callbacks may be invoked from the emulation thread; they must be thread-safe.
 YMIR_CORE_EXPORT void ymir_set_log_callback(ymir_handle_t *handle, ymir_log_callback_t callback, void *user_data);
 
 typedef enum ymir_control_pad_button {
