@@ -1,6 +1,8 @@
 import MetalKit
 import SwiftUI
 
+// MARK: - Metal framebuffer view
+
 struct MetalFramebufferView: UIViewRepresentable {
     // Observe emulator state so the view resumes correctly after tab switches
     @ObservedObject var emulator: EmulatorController
@@ -13,6 +15,7 @@ struct MetalFramebufferView: UIViewRepresentable {
         // init view depending on emu state
         applyEmulatorState(view: view)
 
+        // cofigure the view to be updated when emulator changes
         if let renderer = MetalFramebufferRenderer(view: view, emulator: emulator) {
             context.coordinator.renderer = renderer
             view.delegate = renderer
@@ -37,6 +40,8 @@ struct MetalFramebufferView: UIViewRepresentable {
         var renderer: MetalFramebufferRenderer?
     }
 
+    // change metal view depending on emulator state
+    // Keep MTKView paused when emulation is idle to avoid idle CPU churn.
     private func applyEmulatorState(view: MTKView) {
         if emulator.isRunning {
             view.preferredFramesPerSecond = 60
