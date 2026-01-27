@@ -27,10 +27,23 @@ final class EmulatorController: ObservableObject {
 
     private var handle: OpaquePointer?
     private var audioOutput: AudioOutput?
-    private let runQueue = DispatchQueue(label: "ymir.emu.run", qos: .userInitiated)
-    private let runStateLock = NSLock()
+    private let stateLock = NSLock()
     private var runningInternal = false
+    private var shouldShutdown = false
     private var iplPath: String?
+    private var emuThread: Thread?
+    private let commandCondition = NSCondition()
+    private var commandQueue: [EmuCommand] = []
+    private let shutdownSemaphore = DispatchSemaphore(value: 0)
+    private var audioRefreshTimer: DispatchSourceTimer?
+
+    private enum EmuCommand {
+        case start
+        case stop
+        case reset(hard: Bool)
+        case loadIPL(path: String)
+        case shutdown
+    }
 
     init() {
         var config = ymir_config_t(struct_size: UInt32(MemoryLayout<ymir_config_t>.size), flags: 0)
@@ -45,14 +58,18 @@ final class EmulatorController: ObservableObject {
             if let version = ymir_get_version_string() {
                 logStore.append(level: .info, message: "Ymir core ready (\(String(cString: version)))")
             }
+            startEmuThread()
+            startAudioRefreshTimer()
         } else {
             logStore.append(level: .error, message: "Failed to create Ymir core instance")
         }
     }
 
     deinit {
-        stop()
-        runQueue.sync {
+        audioRefreshTimer?.cancel()
+        if emuThread != nil {
+            enqueueCommand(.shutdown)
+            shutdownSemaphore.wait()
         }
         audioOutput?.stop()
         audioOutput = nil
@@ -63,7 +80,7 @@ final class EmulatorController: ObservableObject {
     }
 
     func loadIPL(from url: URL) {
-        stop()
+        enqueueCommand(.stop)
 
         let fileManager = FileManager.default
         let docsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -95,82 +112,15 @@ final class EmulatorController: ObservableObject {
             self?.statusText = "IPL ready"
         }
 
-        runQueue.async { [weak self] in
-            guard let self = self, let handle = self.handle else {
-                return
-            }
-            let result = ymir_set_ipl_path(handle, destination.path)
-            if result != YMIR_RESULT_OK {
-                let errorMessage = self.lastErrorMessage() ?? "Failed to load IPL ROM"
-                self.logStore.append(level: .error, message: errorMessage)
-                return
-            }
-            _ = ymir_reset(handle, true)
-            self.iplPath = destination.path
-            self.logStore.append(level: .info, message: "IPL ROM loaded and reset")
-        }
+        enqueueCommand(.loadIPL(path: destination.path))
     }
 
     func start() {
-        runQueue.async { [weak self] in
-            guard let self = self, let handle = self.handle else {
-                return
-            }
-            if self.isRunningInternal() {
-                return
-            }
-            guard self.iplPath != nil else {
-                self.logStore.append(level: .warn, message: "Load an IPL ROM before starting")
-                return
-            }
-            let resetResult = ymir_reset(handle, true)
-            if resetResult != YMIR_RESULT_OK {
-                let errorMessage = self.lastErrorMessage() ?? "Failed to reset before start"
-                self.logStore.append(level: .error, message: errorMessage)
-                return
-            }
-            self.logStore.append(level: .info, message: "Emulation reset")
-            self.audioOutput?.start()
-            self.audioOutput?.setMuted(!self.audioEnabled)
-            self.setRunningInternal(true)
-            DispatchQueue.main.async { [weak self] in
-                self?.isRunning = true
-                self?.statusText = "Running"
-            }
-            let frameDuration = 1.0 / 60.0
-            var nextFrameTime = CACurrentMediaTime()
-            while self.isRunningInternal() {
-                ymir_run_frame(handle)
-                self.applyAudioBackpressure(handle)
-                nextFrameTime += frameDuration
-                let now = CACurrentMediaTime()
-                let sleepTime = nextFrameTime - now
-                if sleepTime > 0 {
-                    Thread.sleep(forTimeInterval: sleepTime)
-                } else if sleepTime < -frameDuration {
-                    nextFrameTime = now
-                }
-            }
-            DispatchQueue.main.async { [weak self] in
-                if self?.isRunning == true {
-                    self?.isRunning = false
-                    self?.statusText = "Stopped"
-                }
-            }
-            self.audioOutput?.stop()
-        }
+        enqueueCommand(.start)
     }
 
     func stop() {
-        if !isRunningInternal() {
-            return
-        }
-        setRunningInternal(false)
-        audioOutput?.stop()
-        DispatchQueue.main.async { [weak self] in
-            self?.isRunning = false
-            self?.statusText = "Stopped"
-        }
+        enqueueCommand(.stop)
     }
 
     func setAudioEnabled(_ enabled: Bool) {
@@ -232,6 +182,156 @@ final class EmulatorController: ObservableObject {
         }
     }
 
+    private func startEmuThread() {
+        guard emuThread == nil else {
+            return
+        }
+        let thread = Thread { [weak self] in
+            self?.emuThreadMain()
+        }
+        thread.name = "ymir.emu.thread"
+        thread.start()
+        emuThread = thread
+    }
+
+    private func startAudioRefreshTimer() {
+        if audioRefreshTimer != nil {
+            return
+        }
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 0.25, repeating: 0.25)
+        timer.setEventHandler { [weak self] in
+            guard let self = self else {
+                return
+            }
+            guard let output = self.audioOutput, output.isRunning else {
+                return
+            }
+            self.refreshAudioBufferState()
+        }
+        timer.resume()
+        audioRefreshTimer = timer
+    }
+
+    private func emuThreadMain() {
+        guard let handle = handle else {
+            shutdownSemaphore.signal()
+            return
+        }
+        let frameDuration = 1.0 / 60.0
+        var nextFrameTime = CACurrentMediaTime()
+
+        while true {
+            let commands = dequeueCommands()
+            for command in commands {
+                switch command {
+                case .start:
+                    if isRunningInternal() {
+                        break
+                    }
+                    guard iplPath != nil else {
+                        logStore.append(level: .warn, message: "Load an IPL ROM before starting")
+                        break
+                    }
+                    let resetResult = ymir_reset(handle, true)
+                    if resetResult != YMIR_RESULT_OK {
+                        let errorMessage = lastErrorMessage() ?? "Failed to reset before start"
+                        logStore.append(level: .error, message: errorMessage)
+                        break
+                    }
+                    logStore.append(level: .info, message: "Emulation reset")
+                    audioOutput?.start()
+                    audioOutput?.setMuted(!audioEnabled)
+                    setRunningInternal(true)
+                    nextFrameTime = CACurrentMediaTime()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.isRunning = true
+                        self?.statusText = "Running"
+                    }
+                case .stop:
+                    if !isRunningInternal() {
+                        break
+                    }
+                    setRunningInternal(false)
+                    audioOutput?.stop()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.isRunning = false
+                        self?.statusText = "Stopped"
+                    }
+                case .reset(let hard):
+                    _ = ymir_reset(handle, hard)
+                case .loadIPL(let path):
+                    let result = ymir_set_ipl_path(handle, path)
+                    if result != YMIR_RESULT_OK {
+                        let errorMessage = lastErrorMessage() ?? "Failed to load IPL ROM"
+                        logStore.append(level: .error, message: errorMessage)
+                        break
+                    }
+                    _ = ymir_reset(handle, true)
+                    iplPath = path
+                    logStore.append(level: .info, message: "IPL ROM loaded and reset")
+                case .shutdown:
+                    setShouldShutdown()
+                }
+            }
+
+            if isShutdownRequested() {
+                break
+            }
+
+            if isRunningInternal() {
+                ymir_run_frame(handle)
+                applyAudioBackpressure(handle)
+                nextFrameTime += frameDuration
+                let now = CACurrentMediaTime()
+                let sleepTime = nextFrameTime - now
+                if sleepTime > 0 {
+                    Thread.sleep(forTimeInterval: sleepTime)
+                } else if sleepTime < -frameDuration {
+                    nextFrameTime = now
+                }
+            } else {
+                commandCondition.lock()
+                if commandQueue.isEmpty && !isRunningInternal() && !isShutdownRequested() {
+                    commandCondition.wait()
+                }
+                commandCondition.unlock()
+            }
+        }
+
+        audioOutput?.stop()
+        shutdownSemaphore.signal()
+    }
+
+    private func enqueueCommand(_ command: EmuCommand) {
+        commandCondition.lock()
+        commandQueue.append(command)
+        commandCondition.signal()
+        commandCondition.unlock()
+    }
+
+    private func dequeueCommands() -> [EmuCommand] {
+        commandCondition.lock()
+        let commands = commandQueue
+        commandQueue.removeAll()
+        commandCondition.unlock()
+        return commands
+    }
+
+    private func setShouldShutdown() {
+        stateLock.lock()
+        shouldShutdown = true
+        runningInternal = false
+        stateLock.unlock()
+    }
+
+    private func isShutdownRequested() -> Bool {
+        stateLock.lock()
+        let value = shouldShutdown
+        stateLock.unlock()
+        return value
+    }
+
     private func lastErrorMessage() -> String? {
         guard let handle = handle else {
             return nil
@@ -259,15 +359,15 @@ final class EmulatorController: ObservableObject {
     }
 
     private func setRunningInternal(_ value: Bool) {
-        runStateLock.lock()
+        stateLock.lock()
         runningInternal = value
-        runStateLock.unlock()
+        stateLock.unlock()
     }
 
     private func isRunningInternal() -> Bool {
-        runStateLock.lock()
+        stateLock.lock()
         let value = runningInternal
-        runStateLock.unlock()
+        stateLock.unlock()
         return value
     }
 }
