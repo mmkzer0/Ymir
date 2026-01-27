@@ -2,15 +2,16 @@ import MetalKit
 import SwiftUI
 
 struct MetalFramebufferView: UIViewRepresentable {
-    let emulator: EmulatorController
+    // Observe emulator state so the view resumes correctly after tab switches
+    @ObservedObject var emulator: EmulatorController
 
     func makeUIView(context: Context) -> MTKView {
+        // init view ( +pixfmt, clearCol)
         let view = MTKView(frame: .zero, device: MTLCreateSystemDefaultDevice())
         view.colorPixelFormat = .rgba8Unorm
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        view.preferredFramesPerSecond = 60
-        view.isPaused = false
-        view.enableSetNeedsDisplay = false
+        // init view depending on emu state
+        applyEmulatorState(view: view)
 
         if let renderer = MetalFramebufferRenderer(view: view, emulator: emulator) {
             context.coordinator.renderer = renderer
@@ -25,6 +26,7 @@ struct MetalFramebufferView: UIViewRepresentable {
             context.coordinator.renderer = renderer
             uiView.delegate = renderer
         }
+        applyEmulatorState(view: uiView)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -33,6 +35,22 @@ struct MetalFramebufferView: UIViewRepresentable {
 
     final class Coordinator {
         var renderer: MetalFramebufferRenderer?
+    }
+
+    private func applyEmulatorState(view: MTKView) {
+        if emulator.isRunning {
+            view.preferredFramesPerSecond = 60
+            view.isPaused = false
+            view.enableSetNeedsDisplay = false
+            // Nudge the view to render a frame after state changes or tab switches
+            view.setNeedsDisplay()
+        } else {
+            view.preferredFramesPerSecond = 1   // min for "paused state"
+            view.isPaused = true
+            view.enableSetNeedsDisplay = true
+            // Draw once to clear any stale content when stopping
+            view.setNeedsDisplay()
+        }
     }
 }
 
