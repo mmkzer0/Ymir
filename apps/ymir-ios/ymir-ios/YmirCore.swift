@@ -2,6 +2,9 @@ import Foundation
 import QuartzCore
 import SwiftUI
 
+// MARK: - Core log callback
+
+// devlog callback via FFI; forwards to the UI log store
 private let ymirLogCallback: ymir_log_callback_t = { userData, level, message in
     guard let message = message else {
         return
@@ -14,6 +17,9 @@ private let ymirLogCallback: ymir_log_callback_t = { userData, level, message in
     controller.logStore.append(level: LogLevel(cLevel: level), message: text)
 }
 
+// MARK: - Emulator controller
+
+// Owns a single emulation instance and its dedicated emulation thread
 final class EmulatorController: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var statusText = "Idle"
@@ -25,18 +31,24 @@ final class EmulatorController: ObservableObject {
 
     let logStore = LogStore()
 
+    // MARK: Emulation state
     private var handle: OpaquePointer?
     private var audioOutput: AudioOutput?
     private let stateLock = NSLock()
     private var runningInternal = false
     private var shouldShutdown = false
     private var iplPath: String?
+
+    // MARK: Threading primitives
     private var emuThread: Thread?
     private let commandCondition = NSCondition()
     private var commandQueue: [EmuCommand] = []
     private let shutdownSemaphore = DispatchSemaphore(value: 0)
+
+    // Audio buffer polling uses a background timer to avoid SwiftUI-driven timers
     private var audioRefreshTimer: DispatchSourceTimer?
 
+    // Commands are the only way to mutate core state; processed on the emu thread
     private enum EmuCommand {
         case start
         case stop
@@ -44,6 +56,8 @@ final class EmulatorController: ObservableObject {
         case loadIPL(path: String)
         case shutdown
     }
+
+    // MARK: Lifecycle
 
     init() {
         var config = ymir_config_t(struct_size: UInt32(MemoryLayout<ymir_config_t>.size), flags: 0)
@@ -78,6 +92,8 @@ final class EmulatorController: ObservableObject {
             ymir_destroy(handle)
         }
     }
+
+    // MARK: Public API
 
     func loadIPL(from url: URL) {
         enqueueCommand(.stop)
@@ -131,6 +147,7 @@ final class EmulatorController: ObservableObject {
         audioOutput?.setMuted(!enabled)
     }
 
+    // Updates audio buffer state; safe to call from a background thread
     func refreshAudioBufferState() {
         guard let handle = handle else {
             return
@@ -153,6 +170,7 @@ final class EmulatorController: ObservableObject {
         }
     }
 
+    // If audio buffers drift up, insert tiny sleeps to keep latency bounded
     private func applyAudioBackpressure(_ handle: OpaquePointer) {
         guard let output = audioOutput, output.isRunning else {
             return
@@ -182,6 +200,8 @@ final class EmulatorController: ObservableObject {
         }
     }
 
+    // MARK: Emu thread
+
     private func startEmuThread() {
         guard emuThread == nil else {
             return
@@ -194,6 +214,7 @@ final class EmulatorController: ObservableObject {
         emuThread = thread
     }
 
+    // Audio polling timer runs off the main thread to avoid SwiftUI refresh churn
     private func startAudioRefreshTimer() {
         if audioRefreshTimer != nil {
             return
@@ -218,6 +239,7 @@ final class EmulatorController: ObservableObject {
             shutdownSemaphore.signal()
             return
         }
+        // Wall-clock pacing for v1.4; audio-driven pacing comes in v1.5
         let frameDuration = 1.0 / 60.0
         var nextFrameTime = CACurrentMediaTime()
 
@@ -303,6 +325,8 @@ final class EmulatorController: ObservableObject {
         shutdownSemaphore.signal()
     }
 
+    // MARK: Command queue
+
     private func enqueueCommand(_ command: EmuCommand) {
         commandCondition.lock()
         commandQueue.append(command)
@@ -332,6 +356,8 @@ final class EmulatorController: ObservableObject {
         return value
     }
 
+    // MARK: Core accessors
+
     private func lastErrorMessage() -> String? {
         guard let handle = handle else {
             return nil
@@ -357,6 +383,8 @@ final class EmulatorController: ObservableObject {
         }
         _ = ymir_set_control_pad_buttons(handle, port, buttons)
     }
+
+    // MARK: Thread-safe flags
 
     private func setRunningInternal(_ value: Bool) {
         stateLock.lock()

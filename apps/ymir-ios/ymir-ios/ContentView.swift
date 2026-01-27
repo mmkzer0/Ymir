@@ -1,6 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - Layout constants
+
 private enum AppColors {
     static let backgroundTop = Color(red: 0.97, green: 0.94, blue: 0.90)
     static let backgroundBottom = Color(red: 0.88, green: 0.93, blue: 0.98)
@@ -27,6 +29,7 @@ struct ContentView: View {
     }
 
     var body: some View {
+        // Split into tabs to keep iPhone layouts readable without extra scrolling.
         TabView {
             homeScreen
                 .tabItem {
@@ -56,6 +59,8 @@ struct ContentView: View {
             }
         }
     }
+
+    // MARK: Shared sections
 
     private var header: some View {
         HStack(alignment: .center) {
@@ -191,6 +196,8 @@ struct ContentView: View {
 }
 
 private extension ContentView {
+    // MARK: Screens
+
     var homeScreen: some View {
         screenContainer {
             VStack(alignment: .leading, spacing: 16) {
@@ -238,6 +245,8 @@ private extension ContentView {
                 .padding(20)
         }
     }
+
+    // MARK: Panels
 
     var audioPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
