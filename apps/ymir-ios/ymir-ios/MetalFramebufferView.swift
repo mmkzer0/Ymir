@@ -164,5 +164,6 @@ final class MetalFramebufferRenderer: NSObject, MTKViewDelegate {
 
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        emulator.noteFramePresented(frameId: frameId)
     }
 }

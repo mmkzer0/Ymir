@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -15,11 +16,19 @@ private enum AppColors {
     static let statusIdle = Color(red: 0.90, green: 0.64, blue: 0.22)
 }
 
+private enum AppTab: Hashable {
+    case home
+    case video
+    case console
+}
+
 struct ContentView: View {
     @ObservedObject var emulator: EmulatorController
     @ObservedObject var logStore: LogStore
 
     @State private var showImporter = false
+    @State private var selectedTab: AppTab = .home
+    @State private var showMetricsOverlay = true
     @StateObject private var inputCoordinator: InputCoordinator
 
     init(emulator: EmulatorController, logStore: LogStore) {
@@ -30,21 +39,34 @@ struct ContentView: View {
 
     var body: some View {
         // Split into tabs to keep iPhone layouts readable without extra scrolling.
-        TabView {
+        TabView(selection: $selectedTab) {
             homeScreen
                 .tabItem {
                     Label("Home", systemImage: "house")
                 }
+                .tag(AppTab.home)
 
             videoScreen
                 .tabItem {
                     Label("Video", systemImage: "rectangle.on.rectangle")
                 }
+                .tag(AppTab.video)
 
             consoleScreen
                 .tabItem {
                     Label("Console", systemImage: "terminal")
                 }
+                .tag(AppTab.console)
+        }
+        // Only compute metrics when the Video tab overlay is visible.
+        .onAppear {
+            updateMetricsVisibility()
+        }
+        .onChange(of: selectedTab) { _ in
+            updateMetricsVisibility()
+        }
+        .onChange(of: showMetricsOverlay) { _ in
+            updateMetricsVisibility()
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [UTType.data],
@@ -205,6 +227,7 @@ private extension ContentView {
                 statusCard
                 controls
                 audioPanel
+                overlayPanel
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -288,6 +311,9 @@ private extension ContentView {
 
             ZStack {
                 MetalFramebufferView(emulator: emulator)
+                if showMetricsOverlay {
+                    metricsOverlay
+                }
                 TouchControlOverlay(input: inputCoordinator)
                     .allowsHitTesting(inputCoordinator.showTouchOverlay)
                     .animation(.easeInOut(duration: 0.2), value: inputCoordinator.showTouchOverlay)
@@ -304,6 +330,65 @@ private extension ContentView {
                 .stroke(AppColors.panelStroke, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+private extension ContentView {
+    var overlayPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Overlay")
+                .font(.custom("AvenirNext-DemiBold", size: 12))
+                .foregroundStyle(Color.black.opacity(0.6))
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Metrics HUD")
+                        .font(.custom("AvenirNext-Regular", size: 12))
+                        .foregroundStyle(Color.black.opacity(0.6))
+                    Text(showMetricsOverlay ? "Visible on Video tab" : "Hidden")
+                        .font(.custom("AvenirNext-DemiBold", size: 13))
+                        .foregroundStyle(AppColors.panel)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $showMetricsOverlay)
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle(tint: AppColors.accent))
+            }
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    var metricsOverlay: some View {
+        let snapshot = emulator.metrics
+        let fpsText = snapshot.fps > 0 ? String(format: "%.1f", snapshot.fps) : "—"
+        let ageText: String
+        if let ageSeconds = snapshot.frameAgeSeconds {
+            ageText = String(format: "%.0f ms", ageSeconds * 1000.0)
+        } else {
+            ageText = "—"
+        }
+
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("FPS \(fpsText)")
+            Text("Age \(ageText)")
+        }
+        .font(.custom("Menlo", size: 11))
+        .foregroundStyle(Color.white)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(Color.black.opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(10)
+        .allowsHitTesting(false)
+    }
+
+    func updateMetricsVisibility() {
+        emulator.setMetricsVisible(selectedTab == .video && showMetricsOverlay)
     }
 }
 

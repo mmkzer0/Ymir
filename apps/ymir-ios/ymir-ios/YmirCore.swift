@@ -17,6 +17,63 @@ private let ymirLogCallback: ymir_log_callback_t = { userData, level, message in
     controller.logStore.append(level: LogLevel(cLevel: level), message: text)
 }
 
+// MARK: - Metrics
+
+struct MetricsSnapshot {
+    var fps: Double = 0.0
+    var frameAgeSeconds: Double? = nil
+    var lastFrameId: UInt64 = 0
+
+    static let empty = MetricsSnapshot()
+}
+
+// Lightweight, thread-safe metrics tracker for frame presentation.
+final class MetricsTracker {
+    private let lock = NSLock()
+    private var frameCount: UInt64 = 0
+    private var lastFrameTime: TimeInterval = 0
+    private var lastFrameId: UInt64 = 0
+    private var lastSampleTime: TimeInterval = CACurrentMediaTime()
+    private var lastSampleFrameCount: UInt64 = 0
+
+    func noteFramePresented(frameId: UInt64) {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        frameCount += 1
+        lastFrameTime = now
+        lastFrameId = frameId
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        frameCount = 0
+        lastFrameTime = 0
+        lastFrameId = 0
+        lastSampleTime = CACurrentMediaTime()
+        lastSampleFrameCount = 0
+        lock.unlock()
+    }
+
+    func sample(now: TimeInterval) -> MetricsSnapshot {
+        lock.lock()
+        let totalFrames = frameCount
+        let frameTime = lastFrameTime
+        let frameId = lastFrameId
+        let sampleTime = lastSampleTime
+        let sampleFrames = lastSampleFrameCount
+        lastSampleTime = now
+        lastSampleFrameCount = totalFrames
+        lock.unlock()
+
+        let deltaFrames = totalFrames &- sampleFrames
+        let deltaTime = max(now - sampleTime, 0.001)
+        let fps = Double(deltaFrames) / deltaTime
+        let age = frameTime > 0 ? now - frameTime : nil
+        return MetricsSnapshot(fps: fps, frameAgeSeconds: age, lastFrameId: frameId)
+    }
+}
+
 // MARK: - Emulator controller
 
 // Owns a single emulation instance and its dedicated emulation thread
@@ -28,6 +85,7 @@ final class EmulatorController: ObservableObject {
     @Published private(set) var audioBufferFill: Double = 0.0
     @Published private(set) var audioQueuedFrames = 0
     @Published private(set) var audioCapacityFrames = 0
+    @Published private(set) var metrics = MetricsSnapshot.empty
 
     let logStore = LogStore()
 
@@ -37,6 +95,7 @@ final class EmulatorController: ObservableObject {
     private let stateLock = NSLock()
     private var runningInternal = false
     private var shouldShutdown = false
+    private var metricsVisible = true
     private var iplPath: String?
 
     // MARK: Threading primitives
@@ -47,6 +106,8 @@ final class EmulatorController: ObservableObject {
 
     // Audio buffer polling uses a background timer to avoid SwiftUI-driven timers
     private var audioRefreshTimer: DispatchSourceTimer?
+    private var metricsTimer: DispatchSourceTimer?
+    private let metricsTracker = MetricsTracker()
 
     // Commands are the only way to mutate core state; processed on the emu thread
     private enum EmuCommand {
@@ -81,6 +142,7 @@ final class EmulatorController: ObservableObject {
 
     deinit {
         audioRefreshTimer?.cancel()
+        metricsTimer?.cancel()
         if emuThread != nil {
             enqueueCommand(.shutdown)
             shutdownSemaphore.wait()
@@ -145,6 +207,31 @@ final class EmulatorController: ObservableObject {
         }
         audioEnabled = enabled
         audioOutput?.setMuted(!enabled)
+    }
+
+    // Metrics UI can be hidden when the Home tab isn't visible.
+    // This keeps the background timer off when metrics are not displayed.
+    func setMetricsVisible(_ visible: Bool) {
+        stateLock.lock()
+        if metricsVisible == visible {
+            stateLock.unlock()
+            return
+        }
+        let shouldReset = visible
+        metricsVisible = visible
+        stateLock.unlock()
+        if shouldReset {
+            metricsTracker.reset()
+            DispatchQueue.main.async { [weak self] in
+                self?.metrics = MetricsSnapshot.empty
+            }
+        }
+        updateMetricsTimerState()
+    }
+
+    // Called by the renderer when a frame is presented.
+    func noteFramePresented(frameId: UInt64) {
+        metricsTracker.noteFramePresented(frameId: frameId)
     }
 
     // Updates audio buffer state; safe to call from a background thread
@@ -234,6 +321,42 @@ final class EmulatorController: ObservableObject {
         audioRefreshTimer = timer
     }
 
+    // Metrics sampling runs only while emulation is active to avoid idle UI churn.
+    private func startMetricsTimer() {
+        if metricsTimer != nil {
+            return
+        }
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            guard let self = self else {
+                return
+            }
+            if !self.isRunningInternal() {
+                return
+            }
+            let snapshot = self.metricsTracker.sample(now: CACurrentMediaTime())
+            DispatchQueue.main.async { [weak self] in
+                self?.metrics = snapshot
+            }
+        }
+        timer.resume()
+        metricsTimer = timer
+    }
+
+    private func stopMetricsTimer() {
+        metricsTimer?.cancel()
+        metricsTimer = nil
+    }
+
+    private func updateMetricsTimerState() {
+        if shouldRunMetricsTimer() {
+            startMetricsTimer()
+        } else {
+            stopMetricsTimer()
+        }
+    }
+
     private func emuThreadMain() {
         guard let handle = handle else {
             shutdownSemaphore.signal()
@@ -265,6 +388,11 @@ final class EmulatorController: ObservableObject {
                     audioOutput?.start()
                     audioOutput?.setMuted(!audioEnabled)
                     setRunningInternal(true)
+                    metricsTracker.reset()
+                    updateMetricsTimerState()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.metrics = MetricsSnapshot.empty
+                    }
                     nextFrameTime = CACurrentMediaTime()
                     DispatchQueue.main.async { [weak self] in
                         self?.isRunning = true
@@ -276,6 +404,11 @@ final class EmulatorController: ObservableObject {
                     }
                     setRunningInternal(false)
                     audioOutput?.stop()
+                    metricsTracker.reset()
+                    updateMetricsTimerState()
+                    DispatchQueue.main.async { [weak self] in
+                        self?.metrics = MetricsSnapshot.empty
+                    }
                     DispatchQueue.main.async { [weak self] in
                         self?.isRunning = false
                         self?.statusText = "Stopped"
@@ -294,6 +427,7 @@ final class EmulatorController: ObservableObject {
                     logStore.append(level: .info, message: "IPL ROM loaded and reset")
                 case .shutdown:
                     setShouldShutdown()
+                    updateMetricsTimerState()
                 }
             }
 
@@ -397,5 +531,12 @@ final class EmulatorController: ObservableObject {
         let value = runningInternal
         stateLock.unlock()
         return value
+    }
+
+    private func shouldRunMetricsTimer() -> Bool {
+        stateLock.lock()
+        let shouldRun = runningInternal && metricsVisible
+        stateLock.unlock()
+        return shouldRun
     }
 }
