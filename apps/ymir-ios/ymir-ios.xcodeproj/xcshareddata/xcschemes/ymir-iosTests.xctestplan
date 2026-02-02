@@ -1,0 +1,37 @@
+{
+  "configurations" : [
+    {
+      "id" : "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+      "name" : "Configuration 1",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "commandLineArgumentEntries" : [
+
+    ],
+    "defaultTestExecutionTimeAllowance" : 60,
+    "environmentVariableEntries" : [
+
+    ],
+    "language" : "en",
+    "maximumTestExecutionTimeAllowance" : 600,
+    "region" : "US",
+    "testRepetitionMode" : "none",
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:ymir-ios.xcodeproj",
+        "identifier" : "TG4TARGET",
+        "name" : "ymir-iosTests"
+      }
+    }
+  ],
+  "version" : 1
+}
