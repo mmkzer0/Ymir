@@ -302,7 +302,7 @@ ymir_handle_t *ymir_create(const ymir_config_t *config) {
         port2.SetPeripheralReportCallback({&handle->input_callback_contexts[1], &PeripheralReportCallback});
         handle->audio_buffer.Clear();
         handle->saturn.SCSP.SetSampleCallback({handle, &AudioSampleCallback});
-        handle->saturn.VDP.SetRenderCallback({handle, &FrameCompleteCallback});
+        handle->saturn.VDP.SetSoftwareRenderCallback({handle, &FrameCompleteCallback});
         return handle;
     } catch (const std::exception &) {
         return nullptr;
@@ -313,7 +313,7 @@ ymir_handle_t *ymir_create(const ymir_config_t *config) {
 void ymir_destroy(ymir_handle_t *handle) {
     if (handle != nullptr) {
         RegisterLogCallback(handle, nullptr, nullptr);
-        handle->saturn.VDP.SetRenderCallback({});
+        handle->saturn.VDP.SetSoftwareRenderCallback({});
         handle->saturn.SCSP.SetSampleCallback({});
         handle->saturn.SMPC.GetPeripheralPort1().SetPeripheralReportCallback({});
         handle->saturn.SMPC.GetPeripheralPort2().SetPeripheralReportCallback({});
