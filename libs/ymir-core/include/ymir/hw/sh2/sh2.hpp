@@ -899,29 +899,35 @@ private:
     // -------------------------------------------------------------------------
     // Cached interpreter blocks
 
+    // Phase 3 keeps conservative blocks to maximize correctness and ease debugging.
+    static constexpr size_t kCachedBlockMaxInstructions = 16;
+    static constexpr uint32 kCachedBlockPageSize = 0x1000;
+    static constexpr uint32 kCachedBlockPageMask = ~(kCachedBlockPageSize - 1u);
+
     struct CachedBlock {
         uint32 startPC = 0;
-        std::vector<uint16> instructions;
+        bool startDelaySlot = false;
+        std::array<uint16, kCachedBlockMaxInstructions> instructions{};
+        size_t instructionCount = 0;
     };
 
     struct CachedBlockCursor {
         size_t blockIndex = 0;
         size_t instructionIndex = 0;
         uint32 expectedPC = 0;
+        bool expectedDelaySlot = false;
         bool valid = false;
     };
 
-    // Phase 2 starts with single-op blocks to keep timing and debugging straightforward.
-    static constexpr size_t kCachedBlockMaxInstructions = 1;
-
-    std::unordered_map<uint32, size_t> m_cachedBlocksByPC;
+    // Key format: (PC << 1) | delaySlotBit
+    std::unordered_map<uint64, size_t> m_cachedBlocksByPC;
     std::vector<CachedBlock> m_cachedBlocks;
     CachedBlockCursor m_cachedBlockCursor;
 
     void ClearCachedBlocks();
 
     template <bool enableSH2Cache>
-    void BuildCachedBlock(CachedBlock &block, uint32 startPC);
+    void BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySlot);
 
     // -------------------------------------------------------------------------
     // Debugger
