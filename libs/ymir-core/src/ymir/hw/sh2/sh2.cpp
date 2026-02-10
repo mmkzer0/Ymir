@@ -450,10 +450,41 @@ void SH2::PurgeBlockCache() {
     ClearCachedBlocks();
 }
 
+void SH2::InvalidateBlockCacheRange(uint32 address, uint32 size) {
+    if (size == 0) {
+        return;
+    }
+
+    address &= kCachedBlockAddressMask;
+
+    const uint64 addressRangeSize = static_cast<uint64>(kCachedBlockAddressMask) + 1ull;
+    if (size >= addressRangeSize) {
+        for (auto &generation : m_cachedBlockPageGenerations) {
+            ++generation;
+        }
+        m_cachedBlockCursor.valid = false;
+        return;
+    }
+
+    const uint64 startAddress = address;
+    const uint64 endAddress =
+        std::min<uint64>(startAddress + static_cast<uint64>(size) - 1ull, kCachedBlockAddressMask);
+
+    const uint32 startPage = static_cast<uint32>(startAddress >> kCachedBlockPageBits);
+    const uint32 endPage = static_cast<uint32>(endAddress >> kCachedBlockPageBits);
+
+    for (uint32 page = startPage; page <= endPage; ++page) {
+        ++m_cachedBlockPageGenerations[page];
+    }
+
+    m_cachedBlockCursor.valid = false;
+}
+
 void SH2::ClearCachedBlocks() {
     m_cachedBlocksByPC.clear();
     m_cachedBlocks.clear();
     m_cachedBlockCursor = {};
+    m_cachedBlockPageGenerations.fill(0);
 }
 
 // -----------------------------------------------------------------------------
@@ -1989,11 +2020,14 @@ template <bool enableSH2Cache>
 void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySlot) {
     block.startPC = startPC;
     block.startDelaySlot = startDelaySlot;
+    block.startBusPage = (startPC & kCachedBlockAddressMask) >> kCachedBlockPageBits;
+    block.busPageGeneration = m_cachedBlockPageGenerations[block.startBusPage];
     block.instructionCount = 0;
 
     uint32 buildPC = startPC;
+    uint32 buildBusAddress = startPC & kCachedBlockAddressMask;
     bool decodeDelaySlot = startDelaySlot;
-    const uint32 startPage = startPC & kCachedBlockPageMask;
+    const uint32 startPage = buildBusAddress & kCachedBlockPageMask;
 
     for (size_t i = 0; i < kCachedBlockMaxInstructions; ++i) {
         const uint16 instr = PeekInstruction<enableSH2Cache>(buildPC);
@@ -2006,12 +2040,13 @@ void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySl
             break;
         }
 
-        const uint32 nextPC = buildPC + 2;
-        if ((nextPC & kCachedBlockPageMask) != startPage) {
+        const uint32 nextBusAddress = (buildBusAddress + 2) & kCachedBlockAddressMask;
+        if ((nextBusAddress & kCachedBlockPageMask) != startPage) {
             break;
         }
 
-        buildPC = nextPC;
+        buildPC += 2;
+        buildBusAddress = nextBusAddress;
         decodeDelaySlot = false;
     }
 }
@@ -2080,6 +2115,10 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
             m_cachedBlockCursor.instructionIndex = 0;
         } else if (m_cachedBlockCursor.instructionIndex == 0 &&
                    (block.startPC != PC || block.startDelaySlot != currentDelaySlot)) {
+            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+            m_cachedBlockCursor.instructionIndex = 0;
+        }
+        if (block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage]) {
             BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
             m_cachedBlockCursor.instructionIndex = 0;
         }

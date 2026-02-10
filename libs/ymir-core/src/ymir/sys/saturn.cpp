@@ -4,6 +4,7 @@
 
 #include <ymir/util/dev_log.hpp>
 
+#include <algorithm>
 #include <bit>
 #include <cassert>
 
@@ -83,6 +84,10 @@ Saturn::Saturn()
             devlog::debug<grp::bus>("Unhandled 32-bit main bus write to {:07X} = {:07X}", address, value);
         });
 
+    mainBus.SetWriteObserver(this, [](uint32 address, uint32 size, bool poke, void *ctx) {
+        static_cast<Saturn *>(ctx)->OnMainBusWrite(address, size, poke);
+    });
+
     SH1Bus.MapNormal(
         0x000'0000, 0xFFF'FFFF, nullptr,
         [](uint32 address, void *) -> uint8 {
@@ -117,6 +122,9 @@ Saturn::Saturn()
                      SMPC.CbTriggerOptimizedINTBACKRead, SMPC.CbTriggerVBlankIN);
     SMPC.MapCallbacks(SCU.CbTriggerSystemManager, SCU.CbTriggerPad, VDP.CbExternalLatch);
     SCSP.MapCallbacks(SCU.CbTriggerSoundRequest);
+    SCSP.SetWRAMWriteCallback({this, [](uint32 address, uint32 size, void *ctx) {
+                                   static_cast<Saturn *>(ctx)->OnSCSPWRAMWrite(address, size);
+                               }});
     SH1.SetSCI0Callbacks(CDDrive.CbSerialRx, CDDrive.CbSerialTx);
     CDDrive.MapCallbacks(SH1.CbSetCOMSYNCn, SH1.CbSetCOMREQn, SH1.CbCDBDataSector, SCSP.CbCDDASector,
                          YGR.CbSectorTransferDone);
@@ -754,6 +762,54 @@ void Saturn::ConfigureAccessCycles(bool fastTimings) {
         mainBus.SetAccessCycles(0x5FE'0000, 0x5FE'FFFF, 4, 2);   // SCU registers (TODO: delay on some registers)
         mainBus.SetAccessCycles(0x600'0000, 0x7FF'FFFF, 2, 2);   // High Work RAM
     }
+}
+
+bool Saturn::IsExecutableMainBusRange(uint32 address, uint32 size) {
+    if (size == 0) {
+        return false;
+    }
+
+    static constexpr uint32 kMainBusAddressMask = 0x07FF'FFFF;
+    address &= kMainBusAddressMask;
+
+    const uint64 startAddress = address;
+    const uint64 endAddress = std::min<uint64>(startAddress + static_cast<uint64>(size) - 1ull, kMainBusAddressMask);
+
+    const auto overlapsRange = [&](uint32 rangeStart, uint32 rangeEnd) {
+        return startAddress <= rangeEnd && endAddress >= rangeStart;
+    };
+
+    return overlapsRange(0x020'0000, 0x02F'FFFF) || // Low WRAM
+           overlapsRange(0x600'0000, 0x7FF'FFFF) || // High WRAM
+           overlapsRange(0x5A0'0000, 0x5A7'FFFF) || // SCSP WRAM
+           overlapsRange(0x5C0'0000, 0x5C7'FFFF) || // VDP1 VRAM
+           overlapsRange(0x5C8'0000, 0x5CF'FFFF) || // VDP1 framebuffer RAM
+           overlapsRange(0x5E0'0000, 0x5EF'FFFF) || // VDP2 VRAM
+           overlapsRange(0x5F0'0000, 0x5F7'FFFF);   // VDP2 CRAM
+}
+
+void Saturn::OnMainBusWrite(uint32 address, uint32 size, bool poke) {
+    (void)poke;
+    if (!m_systemFeatures.enableBlockCache) {
+        return;
+    }
+    if (!IsExecutableMainBusRange(address, size)) {
+        return;
+    }
+
+    masterSH2.InvalidateBlockCacheRange(address, size);
+    slaveSH2.InvalidateBlockCacheRange(address, size);
+}
+
+void Saturn::OnSCSPWRAMWrite(uint32 address, uint32 size) {
+    if (!m_systemFeatures.enableBlockCache) {
+        return;
+    }
+
+    // SCSP-internal DMA and M68K writes bypass the main bus write path.
+    const uint32 mainBusAddress = 0x5A0'0000 + (address & 0x7FFFF);
+    masterSH2.InvalidateBlockCacheRange(mainBusAddress, size);
+    slaveSH2.InvalidateBlockCacheRange(mainBusAddress, size);
 }
 
 void Saturn::UpdatePreferredRegionOrder(std::span<const core::config::sys::Region> regions) {

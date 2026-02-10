@@ -32,6 +32,9 @@ using FnWrite32 = void (*)(uint32 address, uint32 value, void *ctx); ///< Functi
 /// @brief Function signature for bus wait checks.
 using FnBusWait = bool (*)(uint32 address, uint32 size, bool write, void *ctx);
 
+/// @brief Function signature for observing writes and pokes on the bus.
+using FnBusWriteObserver = void (*)(uint32 address, uint32 size, bool poke, void *ctx);
+
 /// @brief Specifies valid bus handler function types.
 /// @tparam T the type to check
 template <typename T>
@@ -158,6 +161,14 @@ public:
         }
     }
 
+    /// @brief Configures a callback to observe all successful bus writes/pokes.
+    /// @param[in] context callback context pointer
+    /// @param[in] callback callback function pointer; pass nullptr to disable
+    void SetWriteObserver(void *context, FnBusWriteObserver callback) {
+        m_writeObserverContext = context;
+        m_writeObserver = callback;
+    }
+
     // -----------------------------------------------------------------------------------------------------------------
     // Accessors
 
@@ -199,6 +210,9 @@ public:
         if (entry.array) {
             if (entry.arrayWritable) {
                 util::WriteBE<T>(&entry.array[address & kPageMask], value);
+                if (m_writeObserver != nullptr) {
+                    m_writeObserver(address, sizeof(T), false, m_writeObserverContext);
+                }
             }
             return;
         }
@@ -211,6 +225,10 @@ public:
         } else {
             // should never happen
             util::unreachable();
+        }
+
+        if (m_writeObserver != nullptr) {
+            m_writeObserver(address, sizeof(T), false, m_writeObserverContext);
         }
     }
 
@@ -252,6 +270,9 @@ public:
         if (entry.array) {
             if (entry.arrayWritable) {
                 util::WriteBE<T>(&entry.array[address & kPageMask], value);
+                if (m_writeObserver != nullptr) {
+                    m_writeObserver(address, sizeof(T), true, m_writeObserverContext);
+                }
             }
             return;
         }
@@ -264,6 +285,10 @@ public:
         } else {
             // should never happen
             util::unreachable();
+        }
+
+        if (m_writeObserver != nullptr) {
+            m_writeObserver(address, sizeof(T), true, m_writeObserverContext);
         }
     }
 
@@ -348,6 +373,9 @@ private:
     static_assert(bit::is_power_of_two(sizeof(MemoryPage))); // in order to avoid a multiplication when indexing pages
 
     std::array<MemoryPage, kPageCount> m_pages;
+
+    void *m_writeObserverContext = nullptr;
+    FnBusWriteObserver m_writeObserver = nullptr;
 
     template <bool normal, bool sideEffectFree, bus_handler_fn... THandlers>
         requires util::unique_types<THandlers...>
