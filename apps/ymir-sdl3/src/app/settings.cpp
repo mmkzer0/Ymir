@@ -988,6 +988,7 @@ void Settings::ResetToDefaults() {
     system.videoStandard = config::sys::VideoStandard::NTSC;
 
     system.emulateSH2Cache = false;
+    system.enableCachedInterpreter = false;
 
     system.ipl.overrideImage = false;
     system.ipl.path = "";
@@ -1206,6 +1207,7 @@ SettingsLoadResult Settings::Load(const std::filesystem::path &path) {
         Parse(tblSystem, "AutoDetectRegion", system.autodetectRegion);
         Parse(tblSystem, "PreferredRegionOrder", system.preferredRegionOrder);
         Parse(tblSystem, "EmulateSH2Cache", system.emulateSH2Cache);
+        Parse(tblSystem, "EnableCachedInterpreter", system.enableCachedInterpreter);
         Parse(tblSystem, "InternalBackupRAMImagePath", system.internalBackupRAMImagePath);
         Parse(tblSystem, "InternalBackupRAMPerGame", system.internalBackupRAMPerGame);
         system.internalBackupRAMImagePath = Absolute(ProfilePath::PersistentState, system.internalBackupRAMImagePath);
@@ -1812,6 +1814,7 @@ SettingsSaveResult Settings::Save() {
             {"AutoDetectRegion", system.autodetectRegion.Get()},
             {"PreferredRegionOrder", ToTOML(system.preferredRegionOrder.Get())},
             {"EmulateSH2Cache", system.emulateSH2Cache},
+            {"EnableCachedInterpreter", system.enableCachedInterpreter},
             {"InternalBackupRAMImagePath", Proximate(ProfilePath::PersistentState, system.internalBackupRAMImagePath).native()},
             {"InternalBackupRAMPerGame", system.internalBackupRAMPerGame},
 

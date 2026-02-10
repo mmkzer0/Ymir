@@ -558,6 +558,16 @@ EmuEvent SetEmulateSH2Cache(bool enable) {
     });
 }
 
+EmuEvent SetEnableCachedInterpreter(bool enable) {
+    return RunFunction([=](SharedContext &ctx) {
+        const bool currEnable = ctx.saturn.instance->IsSH2BlockCacheEnabled();
+        if (currEnable != enable) {
+            ctx.saturn.instance->EnableSH2BlockCache(enable);
+            devlog::info<grp::base>("SH2 cached interpreter {}", (enable ? "enabled" : "disabled"));
+        }
+    });
+}
+
 EmuEvent SetCDBlockLLE(bool enable) {
     return RunFunction([=](SharedContext &ctx) {
         ctx.saturn.instance->configuration.cdblock.useLLE = enable;

@@ -53,6 +53,8 @@ void TweaksSettingsView::Display() {
 
         fmt::format_to(inserter, "### System\n");
         fmt::format_to(inserter, "- {}\n", checkbox("Emulate SH-2 cache", settings.system.emulateSH2Cache));
+        fmt::format_to(inserter, "- {}\n",
+                       checkbox("Enable cached interpreter", settings.system.enableCachedInterpreter));
 
         // -------------------------------------------------------------------------------------------------------------
         // Video
@@ -165,6 +167,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
     ImGui::SameLine();
     if (MakeDirty(ImGui::Button("Recommended##accuracy"))) {
         m_context.EnqueueEvent(events::emu::SetEmulateSH2Cache(false));
+        m_context.EnqueueEvent(events::emu::SetEnableCachedInterpreter(false));
 
         m_context.EnqueueEvent(events::emu::EnableThreadedVDP1(true));
         m_context.EnqueueEvent(events::emu::EnableThreadedVDP2(true));
@@ -172,6 +175,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
         m_context.EnqueueEvent(events::emu::SetCDBlockLLE(false));
 
         settings.system.emulateSH2Cache = false;
+        settings.system.enableCachedInterpreter = false;
 
         settings.audio.interpolation = ymir::core::config::audio::SampleInterpolationMode::Linear;
         settings.audio.stepGranularity = 0;
@@ -188,6 +192,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
     ImGui::SameLine();
     if (MakeDirty(ImGui::Button("Best accuracy##accuracy"))) {
         m_context.EnqueueEvent(events::emu::SetEmulateSH2Cache(true));
+        m_context.EnqueueEvent(events::emu::SetEnableCachedInterpreter(false));
 
         m_context.EnqueueEvent(events::emu::EnableThreadedVDP1(true));
         m_context.EnqueueEvent(events::emu::EnableThreadedVDP2(true));
@@ -195,6 +200,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
         m_context.EnqueueEvent(events::emu::SetCDBlockLLE(true));
 
         settings.system.emulateSH2Cache = true;
+        settings.system.enableCachedInterpreter = false;
 
         settings.audio.interpolation = ymir::core::config::audio::SampleInterpolationMode::Linear;
         settings.audio.stepGranularity = 5;
@@ -214,6 +220,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
     ImGui::SameLine();
     if (MakeDirty(ImGui::Button("Best performance##accuracy"))) {
         m_context.EnqueueEvent(events::emu::SetEmulateSH2Cache(false));
+        m_context.EnqueueEvent(events::emu::SetEnableCachedInterpreter(true));
 
         m_context.EnqueueEvent(events::emu::EnableThreadedVDP1(true));
         m_context.EnqueueEvent(events::emu::EnableThreadedVDP2(true));
@@ -221,6 +228,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
         m_context.EnqueueEvent(events::emu::SetCDBlockLLE(false));
 
         settings.system.emulateSH2Cache = false;
+        settings.system.enableCachedInterpreter = true;
 
         settings.audio.interpolation = ymir::core::config::audio::SampleInterpolationMode::Linear;
         settings.audio.stepGranularity = 0;
@@ -241,6 +249,7 @@ void TweaksSettingsView::DisplayAccuracyOptions() {
     ImGui::PopFont();
 
     widgets::settings::system::EmulateSH2Cache(m_context);
+    widgets::settings::system::EnableCachedInterpreter(m_context);
 
     // -----------------------------------------------------------------------------------------------------------------
 

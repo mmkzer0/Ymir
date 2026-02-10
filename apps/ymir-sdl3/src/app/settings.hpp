@@ -181,6 +181,7 @@ struct Settings {
         util::Observable<ymir::core::config::sys::VideoStandard> videoStandard;
 
         bool emulateSH2Cache;
+        bool enableCachedInterpreter;
 
         std::filesystem::path internalBackupRAMImagePath;
         bool internalBackupRAMPerGame;

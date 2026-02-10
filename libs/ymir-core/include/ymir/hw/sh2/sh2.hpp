@@ -41,6 +41,8 @@
 #include <iosfwd>
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <vector>
 
 namespace ymir::sh2 {
 
@@ -101,6 +103,9 @@ public:
     // Purges the contents of the cache.
     // Should be done before enabling cache emulation to ensure previous cache contents are cleared.
     void PurgeCache();
+
+    // Purges cached interpreter blocks.
+    void PurgeBlockCache();
 
     // -------------------------------------------------------------------------
     // Save states
@@ -890,6 +895,33 @@ private:
     // Cache
 
     Cache m_cache;
+
+    // -------------------------------------------------------------------------
+    // Cached interpreter blocks
+
+    struct CachedBlock {
+        uint32 startPC = 0;
+        std::vector<uint16> instructions;
+    };
+
+    struct CachedBlockCursor {
+        size_t blockIndex = 0;
+        size_t instructionIndex = 0;
+        uint32 expectedPC = 0;
+        bool valid = false;
+    };
+
+    // Phase 2 starts with single-op blocks to keep timing and debugging straightforward.
+    static constexpr size_t kCachedBlockMaxInstructions = 1;
+
+    std::unordered_map<uint32, size_t> m_cachedBlocksByPC;
+    std::vector<CachedBlock> m_cachedBlocks;
+    CachedBlockCursor m_cachedBlockCursor;
+
+    void ClearCachedBlocks();
+
+    template <bool enableSH2Cache>
+    void BuildCachedBlock(CachedBlock &block, uint32 startPC);
 
     // -------------------------------------------------------------------------
     // Debugger
