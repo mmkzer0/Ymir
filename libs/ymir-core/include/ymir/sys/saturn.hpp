@@ -373,6 +373,15 @@ private:
     /// @param[in] fastTimings `true` to use 1 waitstate for every access, `false` to use normal timings
     void ConfigureAccessCycles(bool fastTimings);
 
+    // Observes writes/pokes on the main bus and invalidates SH-2 cached interpreter blocks when executable memory
+    // changes.
+    void OnMainBusWrite(uint32 address, uint32 size, bool poke);
+
+    // Observes SCSP WRAM writes that bypass the main bus write path.
+    void OnSCSPWRAMWrite(uint32 address, uint32 size);
+
+    static bool IsExecutableMainBusRange(uint32 address, uint32 size);
+
     // -------------------------------------------------------------------------
     // Internal configuration
 
