@@ -109,6 +109,32 @@ namespace config {
     inline constexpr uint32 sysExecDumpAddress = 0x186C;
 } // namespace config
 
+FORCE_INLINE static uint64 MakeCachedBlockKey(uint32 pc, bool delaySlot) {
+    return (static_cast<uint64>(pc) << 1u) | static_cast<uint64>(delaySlot ? 1u : 0u);
+}
+
+FORCE_INLINE static bool IsCachedBlockBarrier(OpcodeType opcode) {
+    switch (opcode) {
+    case OpcodeType::SLEEP:
+    case OpcodeType::BF:
+    case OpcodeType::BFS:
+    case OpcodeType::BT:
+    case OpcodeType::BTS:
+    case OpcodeType::BRA:
+    case OpcodeType::BRAF:
+    case OpcodeType::BSR:
+    case OpcodeType::BSRF:
+    case OpcodeType::JMP:
+    case OpcodeType::JSR:
+    case OpcodeType::TRAPA:
+    case OpcodeType::RTE:
+    case OpcodeType::RTS:
+    case OpcodeType::Illegal:
+    case OpcodeType::IllegalSlot: return true;
+    default: return false;
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Debugger
 
@@ -1960,15 +1986,33 @@ FORCE_INLINE uint64 SH2::EnterException(uint8 vectorNumber) {
 }
 
 template <bool enableSH2Cache>
-void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC) {
+void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySlot) {
     block.startPC = startPC;
-    block.instructions.clear();
-    block.instructions.reserve(kCachedBlockMaxInstructions);
+    block.startDelaySlot = startDelaySlot;
+    block.instructionCount = 0;
 
     uint32 buildPC = startPC;
+    bool decodeDelaySlot = startDelaySlot;
+    const uint32 startPage = startPC & kCachedBlockPageMask;
+
     for (size_t i = 0; i < kCachedBlockMaxInstructions; ++i) {
-        block.instructions.push_back(PeekInstruction<enableSH2Cache>(buildPC));
-        buildPC += 2;
+        const uint16 instr = PeekInstruction<enableSH2Cache>(buildPC);
+        const OpcodeType opcode = DecodeTable::s_instance.opcodes[decodeDelaySlot][instr];
+        block.instructions[block.instructionCount] = instr;
+        ++block.instructionCount;
+
+        // A delay-slot entrypoint is always a single-op block.
+        if (decodeDelaySlot || IsCachedBlockBarrier(opcode)) {
+            break;
+        }
+
+        const uint32 nextPC = buildPC + 2;
+        if ((nextPC & kCachedBlockPageMask) != startPage) {
+            break;
+        }
+
+        buildPC = nextPC;
+        decodeDelaySlot = false;
     }
 }
 
@@ -2008,36 +2052,69 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
 
     uint16 instr = 0;
     if constexpr (enableBlockCache && !debug) {
-        if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC) {
-            auto it = m_cachedBlocksByPC.find(PC);
+        const bool currentDelaySlot = m_delaySlot;
+        const uint64 blockKey = MakeCachedBlockKey(PC, currentDelaySlot);
+
+        if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC ||
+            m_cachedBlockCursor.expectedDelaySlot != currentDelaySlot) {
+            auto it = m_cachedBlocksByPC.find(blockKey);
             if (it == m_cachedBlocksByPC.end()) {
                 CachedBlock block{};
-                BuildCachedBlock<enableSH2Cache>(block, PC);
+                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
 
                 const size_t blockIndex = m_cachedBlocks.size();
                 m_cachedBlocks.emplace_back(std::move(block));
-                it = m_cachedBlocksByPC.emplace(PC, blockIndex).first;
+                it = m_cachedBlocksByPC.emplace(blockKey, blockIndex).first;
             }
 
             m_cachedBlockCursor.blockIndex = it->second;
             m_cachedBlockCursor.instructionIndex = 0;
             m_cachedBlockCursor.expectedPC = PC;
+            m_cachedBlockCursor.expectedDelaySlot = currentDelaySlot;
             m_cachedBlockCursor.valid = true;
         }
 
         CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
-        if (block.instructions.empty()) {
-            BuildCachedBlock<enableSH2Cache>(block, block.startPC);
+        if (block.instructionCount == 0) {
+            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+            m_cachedBlockCursor.instructionIndex = 0;
+        } else if (m_cachedBlockCursor.instructionIndex == 0 &&
+                   (block.startPC != PC || block.startDelaySlot != currentDelaySlot)) {
+            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+            m_cachedBlockCursor.instructionIndex = 0;
+        }
+        if (m_cachedBlockCursor.instructionIndex >= block.instructionCount) {
+            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+            m_cachedBlockCursor.instructionIndex = 0;
         }
 
         // Keep regular fetch semantics for timing/side effects, then validate cached opcode.
-        instr = FetchInstruction<enableSH2Cache>(PC);
-        if (block.instructions[0] != instr) {
-            BuildCachedBlock<enableSH2Cache>(block, block.startPC);
+        const uint16 fetchedInstr = FetchInstruction<enableSH2Cache>(PC);
+        instr = block.instructions[m_cachedBlockCursor.instructionIndex];
+        if (instr != fetchedInstr) {
+            // Rebuild only on block entry; for mid-block mismatches, execute fetched opcode and drop the cursor.
+            if (m_cachedBlockCursor.instructionIndex == 0) {
+                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+                m_cachedBlockCursor.instructionIndex = 0;
+                instr = block.instructions[0];
+            }
+            if (instr != fetchedInstr) {
+                // Fallback for edge cases where the peek path does not match a fetch result.
+                instr = fetchedInstr;
+                m_cachedBlockCursor.valid = false;
+            }
         }
 
-        // Phase 2 requirement: execute exactly one instruction per InterpretNext() invocation.
-        m_cachedBlockCursor.valid = false;
+        // Keep Phase 2/3 requirement: execute exactly one instruction per InterpretNext() invocation.
+        const size_t nextInstructionIndex = m_cachedBlockCursor.instructionIndex + 1;
+        if (nextInstructionIndex < block.instructionCount) {
+            m_cachedBlockCursor.instructionIndex = nextInstructionIndex;
+            m_cachedBlockCursor.expectedPC = PC + 2;
+            // The builder ends blocks before control-flow opcodes that can arm delay slots.
+            m_cachedBlockCursor.expectedDelaySlot = false;
+        } else {
+            m_cachedBlockCursor.valid = false;
+        }
     } else {
         instr = FetchInstruction<enableSH2Cache>(PC);
     }
