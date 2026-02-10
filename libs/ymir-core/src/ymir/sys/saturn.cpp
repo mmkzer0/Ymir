@@ -172,6 +172,7 @@ Saturn::Saturn()
 
     m_systemFeatures.enableDebugTracing = false;
     m_systemFeatures.emulateSH2Cache = false;
+    m_systemFeatures.enableBlockCache = false;
     UpdateFunctionPointers();
 
     configuration.system.preferredRegionOrder.Observe(
@@ -524,22 +525,22 @@ void Saturn::DumpCDBlockDRAM(std::ostream &out) {
 // Note:
 // - Step out/return can be implemented in terms of single-stepping and instruction tracing events
 
-template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
 void Saturn::RunFrameImpl() {
     // Use the last line phase as reference to give some leeway if we overshoot the target cycles
     while (VDP.InLastLinePhase()) {
-        if (!Run<debug, enableSH2Cache, cdblockLLE>()) {
+        if (!Run<debug, enableSH2Cache, enableBlockCache, cdblockLLE>()) {
             return;
         }
     }
     while (!VDP.InLastLinePhase()) {
-        if (!Run<debug, enableSH2Cache, cdblockLLE>()) {
+        if (!Run<debug, enableSH2Cache, enableBlockCache, cdblockLLE>()) {
             return;
         }
     }
 }
 
-template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
 bool Saturn::Run() {
     static constexpr uint64 kSH2SyncMaxStep = 32;
 
@@ -558,8 +559,8 @@ bool Saturn::Run() {
             do {
                 const uint64 prevExecCycles = execCycles;
                 const uint64 targetCycles = std::min(execCycles + kSH2SyncMaxStep, cycles);
-                execCycles = masterSH2.Advance<debug, enableSH2Cache>(targetCycles, execCycles);
-                slaveCycles = slaveSH2.Advance<debug, enableSH2Cache>(execCycles, slaveCycles);
+                execCycles = masterSH2.Advance<debug, enableSH2Cache, enableBlockCache>(targetCycles, execCycles);
+                slaveCycles = slaveSH2.Advance<debug, enableSH2Cache, enableBlockCache>(execCycles, slaveCycles);
                 SCU.Advance<debug>(execCycles - prevExecCycles);
                 if constexpr (debug) {
                     if (m_debugBreakMgr.IsDebugBreakRaised()) {
@@ -581,7 +582,7 @@ bool Saturn::Run() {
             do {
                 const uint64 prevExecCycles = execCycles;
                 const uint64 targetCycles = std::min(execCycles + kSH2SyncMaxStep, cycles);
-                execCycles = masterSH2.Advance<debug, enableSH2Cache>(targetCycles, execCycles);
+                execCycles = masterSH2.Advance<debug, enableSH2Cache, enableBlockCache>(targetCycles, execCycles);
                 SCU.Advance<debug>(execCycles - prevExecCycles);
                 if constexpr (debug) {
                     if (m_debugBreakMgr.IsDebugBreakRaised()) {
@@ -620,7 +621,7 @@ bool Saturn::Run() {
     return true;
 }
 
-template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
 uint64 Saturn::StepMasterSH2Impl() {
     while (SCU.IsDMAActive()) {
         const uint64 cycles = 64;
@@ -635,12 +636,13 @@ uint64 Saturn::StepMasterSH2Impl() {
         m_scheduler.Advance(cycles);
     }
 
-    uint64 masterCycles = masterSH2.Step<debug, enableSH2Cache>();
+    uint64 masterCycles = masterSH2.Step<debug, enableSH2Cache, enableBlockCache>();
     if (masterCycles >= m_msh2SpilloverCycles) {
         masterCycles -= m_msh2SpilloverCycles;
         m_msh2SpilloverCycles = 0;
         if (slaveSH2Enabled) {
-            const uint64 slaveCycles = slaveSH2.Advance<debug, enableSH2Cache>(masterCycles, m_ssh2SpilloverCycles);
+            const uint64 slaveCycles =
+                slaveSH2.Advance<debug, enableSH2Cache, enableBlockCache>(masterCycles, m_ssh2SpilloverCycles);
             m_ssh2SpilloverCycles = slaveCycles - masterCycles;
         }
         SCU.Advance<debug>(masterCycles);
@@ -658,7 +660,7 @@ uint64 Saturn::StepMasterSH2Impl() {
     return masterCycles;
 }
 
-template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
 uint64 Saturn::StepSlaveSH2Impl() {
     if (!slaveSH2Enabled) {
         return 0;
@@ -677,11 +679,12 @@ uint64 Saturn::StepSlaveSH2Impl() {
         m_scheduler.Advance(cycles);
     }
 
-    uint64 slaveCycles = slaveSH2.Step<debug, enableSH2Cache>();
+    uint64 slaveCycles = slaveSH2.Step<debug, enableSH2Cache, enableBlockCache>();
     if (slaveCycles >= m_ssh2SpilloverCycles) {
         slaveCycles -= m_ssh2SpilloverCycles;
         m_ssh2SpilloverCycles = 0;
-        const uint64 masterCycles = masterSH2.Advance<debug, enableSH2Cache>(slaveCycles, m_msh2SpilloverCycles);
+        const uint64 masterCycles =
+            masterSH2.Advance<debug, enableSH2Cache, enableBlockCache>(slaveCycles, m_msh2SpilloverCycles);
         m_msh2SpilloverCycles = masterCycles - slaveCycles;
         SCU.Advance<debug>(slaveCycles);
         VDP.Advance(slaveCycles);
@@ -699,7 +702,8 @@ uint64 Saturn::StepSlaveSH2Impl() {
 }
 
 void Saturn::UpdateFunctionPointers() {
-    UpdateFunctionPointersTemplate(m_systemFeatures.enableDebugTracing, m_systemFeatures.emulateSH2Cache, m_cdblockLLE);
+    UpdateFunctionPointersTemplate(m_systemFeatures.enableDebugTracing, m_systemFeatures.emulateSH2Cache,
+                                   m_systemFeatures.enableBlockCache, m_cdblockLLE);
 }
 
 template <bool... t_features>

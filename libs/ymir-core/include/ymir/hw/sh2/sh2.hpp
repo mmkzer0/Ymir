@@ -79,16 +79,16 @@ public:
 
     /// @brief Advances the SH2 for at least the specified number of cycles.
     /// @tparam debug whether to enable debug features
-    /// @tparam enableCache whether to emulate the cache
+    /// @tparam enableSH2Cache whether to emulate the cache
     /// @param[in] cycles the minimum number of cycles
     /// @param[in] spilloverCycles cycles spilled over from the previous execution
     /// @return the number of cycles actually executed
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache = false>
     uint64 Advance(uint64 cycles, uint64 spilloverCycles = 0);
 
     // Executes a single instruction.
     // Returns the number of cycles executed.
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache = false>
     uint64 Step();
 
     bool IsMaster() const {
@@ -711,51 +711,51 @@ private:
     //    110   Data array read/write area      Cache data acessed directly (4 KiB, mirrored)
     //    111   I/O area (on-chip registers)    Cache bypassed
 
-    template <mem_primitive T, bool instrFetch, bool peek, bool enableCache>
+    template <mem_primitive T, bool instrFetch, bool peek, bool enableSH2Cache>
     T MemRead(uint32 address);
 
-    template <mem_primitive T, bool poke, bool debug, bool enableCache>
+    template <mem_primitive T, bool poke, bool debug, bool enableSH2Cache>
     void MemWrite(uint32 address, T value);
 
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint16 FetchInstruction(uint32 address);
 
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint8 MemReadByte(uint32 address);
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint16 MemReadWord(uint32 address);
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint32 MemReadLong(uint32 address);
 
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache>
     void MemWriteByte(uint32 address, uint8 value);
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache>
     void MemWriteWord(uint32 address, uint16 value);
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache>
     void MemWriteLong(uint32 address, uint32 value);
 
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint16 PeekInstruction(uint32 address);
 
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint8 MemPeekByte(uint32 address);
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint16 MemPeekWord(uint32 address);
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     uint32 MemPeekLong(uint32 address);
 
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     void MemPokeByte(uint32 address, uint8 value);
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     void MemPokeWord(uint32 address, uint16 value);
-    template <bool enableCache>
+    template <bool enableSH2Cache>
     void MemPokeLong(uint32 address, uint32 value);
 
     // Returns 00 00 00 01 00 02 00 03 00 04 00 05 00 06 00 07 ... repeating
     template <mem_primitive T>
     T OpenBusSeqRead(uint32 address);
 
-    template <bool write, bool enableCache>
+    template <bool write, bool enableSH2Cache>
     uint64 AccessCycles(uint32 address);
 
     // -------------------------------------------------------------------------
@@ -771,14 +771,14 @@ private:
     template <bool peek>
     uint32 OnChipRegReadLong(uint32 address);
 
-    template <mem_primitive T, bool poke, bool debug, bool enableCache>
+    template <mem_primitive T, bool poke, bool debug, bool enableSH2Cache>
     void OnChipRegWrite(uint32 address, T value);
 
-    template <bool poke, bool debug, bool enableCache>
+    template <bool poke, bool debug, bool enableSH2Cache>
     void OnChipRegWriteByte(uint32 address, uint8 value);
-    template <bool poke, bool debug, bool enableCache>
+    template <bool poke, bool debug, bool enableSH2Cache>
     void OnChipRegWriteWord(uint32 address, uint16 value);
-    template <bool poke, bool debug, bool enableCache>
+    template <bool poke, bool debug, bool enableSH2Cache>
     void OnChipRegWriteLong(uint32 address, uint32 value);
 
     // --- SCI module ---
@@ -804,10 +804,10 @@ private:
     // A transfer is active if DE = 1, DME = 1, TE = 0, NMIF = 0 and AE = 0.
     bool IsDMATransferActive(const DMAChannel &ch) const;
 
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache>
     bool StepDMAC(uint32 channel);
 
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache>
     void AdvanceDMA(uint64 cycles);
 
     // --- WDT module ---
@@ -928,7 +928,7 @@ private:
     template <bool delaySlot>
     void AdvancePC();
 
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache>
     uint64 EnterException(uint8 vectorNumber);
 
     // -------------------------------------------------------------------------
@@ -936,11 +936,11 @@ private:
 
     // Interprets the next instruction.
     // Returns the number of cycles executed.
-    template <bool debug, bool enableCache>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache = false>
     uint64 InterpretNext();
 
-#define TPL_TRAITS template <bool debug, bool enableCache>
-#define TPL_TRAITS_DS template <bool debug, bool enableCache, bool delaySlot>
+#define TPL_TRAITS template <bool debug, bool enableSH2Cache>
+#define TPL_TRAITS_DS template <bool debug, bool enableSH2Cache, bool delaySlot>
 #define TPL_DS template <bool delaySlot>
 
     TPL_DS uint64 NOP(); // nop
