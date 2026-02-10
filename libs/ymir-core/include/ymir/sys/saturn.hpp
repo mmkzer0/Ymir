@@ -201,6 +201,7 @@ struct Saturn {
     /// The implementation of the function depends on the following parameters:
     /// - **Debug tracing**: configured with `EnableDebugTracing(bool)`
     /// - **SH-2 cache emulation**: configured with `EnableSH2CacheEmulation(bool)`
+    /// - **SH-2 block cache**: configured with `SystemFeatures::enableBlockCache`
     void RunFrame() {
         (this->*m_runFrameFn)();
     }
@@ -210,6 +211,7 @@ struct Saturn {
     /// The implementation of the function depends on the following parameters:
     /// - **Debug tracing**: configured with `EnableDebugTracing(bool)`
     /// - **SH-2 cache emulation**: configured with `EnableSH2CacheEmulation(bool)`
+    /// - **SH-2 block cache**: configured with `SystemFeatures::enableBlockCache`
     /// @return the number of cycles executed
     uint64 StepMasterSH2() {
         return (this->*m_stepMSH2Fn)();
@@ -220,6 +222,7 @@ struct Saturn {
     /// The implementation of the function depends on the following parameters:
     /// - **Debug tracing**: configured with `EnableDebugTracing(bool)`
     /// - **SH-2 cache emulation**: configured with `EnableSH2CacheEmulation(bool)`
+    /// - **SH-2 block cache**: configured with `SystemFeatures::enableBlockCache`
     /// @return the number of cycles executed, zero if the slave SH-2 is disabled
     uint64 StepSlaveSH2() {
         return (this->*m_stepSSH2Fn)();
@@ -279,32 +282,36 @@ private:
     /// @brief Runs the emulator until the end of the current frame.
     /// @tparam debug whether to use debug tracing
     /// @tparam enableSH2Cache whether to emulate SH-2 caches
+    /// @tparam enableBlockCache whether to use cached SH-2 interpreter blocks
     /// @tparam cdblockLLE whether to use low-level CD block emulation
-    template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
     void RunFrameImpl();
 
     /// @brief Runs the emulator until the next scheduled event.
     /// @tparam debug whether to use debug tracing
     /// @tparam enableSH2Cache whether to emulate SH-2 caches
+    /// @tparam enableBlockCache whether to use cached SH-2 interpreter blocks
     /// @tparam cdblockLLE whether to use low-level CD block emulation
     /// @return true if execution should continue, false to suspend
-    template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
     bool Run();
 
     /// @brief Runs a single master SH-2 instruction.
     /// @tparam debug whether to use debug tracing
     /// @tparam enableSH2Cache whether to emulate SH-2 caches
+    /// @tparam enableBlockCache whether to use cached SH-2 interpreter blocks
     /// @tparam cdblockLLE whether to use low-level CD block emulation
     /// @return the number of cycles executed
-    template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
     uint64 StepMasterSH2Impl();
 
     /// @brief Runs a single slave SH-2 instruction if the CPU is enabled.
     /// @tparam debug whether to use debug tracing
     /// @tparam enableSH2Cache whether to emulate SH-2 caches
+    /// @tparam enableBlockCache whether to use cached SH-2 interpreter blocks
     /// @tparam cdblockLLE whether to use low-level CD block emulation
     /// @return the number of cycles executed, zero if the slave SH-2 is disabled
-    template <bool debug, bool enableSH2Cache, bool cdblockLLE>
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache, bool cdblockLLE>
     uint64 StepSlaveSH2Impl();
 
     /// @brief The type of the `RunFrameImpl()` implementation to use from `RunFrame()`.
@@ -312,7 +319,7 @@ private:
 
     /// @brief The current `RunFrameImpl()` implementation in use.
     ///
-    /// Depends on debug tracing and SH-2 cache emulation settings.
+    /// Depends on debug tracing, SH-2 cache emulation and SH-2 block cache settings.
     RunFrameFn m_runFrameFn;
 
     /// @brief The type of the `StepMasterSH2Impl()` implementation to use from `StepMasterSH2()`.
@@ -320,16 +327,16 @@ private:
 
     /// @brief The current `StepMasterSH2Impl()` implementation in use.
     ///
-    /// Depends on debug tracing and SH-2 cache emulation settings.
+    /// Depends on debug tracing, SH-2 cache emulation and SH-2 block cache settings.
     StepSH2Fn m_stepMSH2Fn;
 
     /// @brief The current `StepSlaveSH2Impl()` implementation in use.
     ///
-    /// Depends on debug tracing and SH-2 cache emulation settings.
+    /// Depends on debug tracing, SH-2 cache emulation and SH-2 block cache settings.
     StepSH2Fn m_stepSSH2Fn;
 
-    /// @brief Updates pointers to the execution functions based on the current debug tracing, SH-2 cache emulation and
-    /// low-level CD Block emulation settings.
+    /// @brief Updates pointers to the execution functions based on the current debug tracing, SH-2 cache emulation,
+    /// SH-2 block cache and low-level CD Block emulation settings.
     void UpdateFunctionPointers();
 
     /// @brief Helper template to convert runtime parameters into compile-time constants for building function pointers.
