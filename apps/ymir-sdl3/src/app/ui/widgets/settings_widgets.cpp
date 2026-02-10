@@ -52,6 +52,18 @@ namespace settings::system {
         }
     }
 
+    void EnableCachedInterpreter(SharedContext &ctx) {
+        auto &settings = ctx.serviceLocator.GetRequired<Settings>();
+        bool enableCachedInterpreter = settings.system.enableCachedInterpreter;
+        if (settings.MakeDirty(ImGui::Checkbox("Enable cached interpreter", &enableCachedInterpreter))) {
+            ctx.EnqueueEvent(events::emu::SetEnableCachedInterpreter(enableCachedInterpreter));
+            settings.system.enableCachedInterpreter = enableCachedInterpreter;
+        }
+        widgets::ExplanationTooltip("Enables SH-2 cached interpreter blocks.\n"
+                                    "Intended to improve performance while preserving interpreter behavior.",
+                                    ctx.displayScale);
+    }
+
 } // namespace settings::system
 
 namespace settings::video {

@@ -136,6 +136,7 @@ void SystemSettingsView::Display() {
     ImGui::PopFont();
 
     widgets::settings::system::EmulateSH2Cache(m_context);
+    widgets::settings::system::EnableCachedInterpreter(m_context);
 
     // -----------------------------------------------------------------------------------------------------------------
 

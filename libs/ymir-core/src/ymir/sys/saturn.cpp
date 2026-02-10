@@ -791,6 +791,22 @@ void Saturn::UpdateSH2CacheEmulation(bool enabled) {
     UpdateFunctionPointers();
 }
 
+void Saturn::EnableSH2BlockCache(bool enable) {
+    UpdateSH2BlockCache(enable);
+}
+
+void Saturn::UpdateSH2BlockCache(bool enabled) {
+    if (m_systemFeatures.enableBlockCache == enabled) {
+        return;
+    }
+
+    m_systemFeatures.enableBlockCache = enabled;
+    // Runtime mode switches must drop decoded state to avoid using stale opcodes.
+    masterSH2.PurgeBlockCache();
+    slaveSH2.PurgeBlockCache();
+    UpdateFunctionPointers();
+}
+
 void Saturn::UpdateVideoStandard(core::config::sys::VideoStandard videoStandard) {
     m_system.videoStandard = videoStandard;
     m_system.UpdateClockRatios();
