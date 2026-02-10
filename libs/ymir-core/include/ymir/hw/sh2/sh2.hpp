@@ -107,6 +107,10 @@ public:
     // Purges cached interpreter blocks.
     void PurgeBlockCache();
 
+    // Invalidates cached interpreter blocks that overlap the specified main-bus address range.
+    // Addresses use the 27-bit Saturn main bus space.
+    void InvalidateBlockCacheRange(uint32 address, uint32 size);
+
     // -------------------------------------------------------------------------
     // Save states
 
@@ -903,10 +907,16 @@ private:
     static constexpr size_t kCachedBlockMaxInstructions = 16;
     static constexpr uint32 kCachedBlockPageSize = 0x1000;
     static constexpr uint32 kCachedBlockPageMask = ~(kCachedBlockPageSize - 1u);
+    static constexpr uint32 kCachedBlockPageBits = 12;
+    static constexpr uint32 kCachedBlockAddressMask = 0x07FF'FFFF;
+    static constexpr size_t kCachedBlockPageCount =
+        (static_cast<size_t>(kCachedBlockAddressMask) + 1ull) / kCachedBlockPageSize;
 
     struct CachedBlock {
         uint32 startPC = 0;
         bool startDelaySlot = false;
+        uint32 startBusPage = 0;
+        uint32 busPageGeneration = 0;
         std::array<uint16, kCachedBlockMaxInstructions> instructions{};
         size_t instructionCount = 0;
     };
@@ -923,6 +933,7 @@ private:
     std::unordered_map<uint64, size_t> m_cachedBlocksByPC;
     std::vector<CachedBlock> m_cachedBlocks;
     CachedBlockCursor m_cachedBlockCursor;
+    std::array<uint32, kCachedBlockPageCount> m_cachedBlockPageGenerations{};
 
     void ClearCachedBlocks();
 

@@ -128,6 +128,10 @@ public:
         m_cbTriggerSoundRequestInterrupt = callback;
     }
 
+    void SetWRAMWriteCallback(CBSCSPWRAMWrite callback) {
+        m_cbWRAMWrite = callback;
+    }
+
     void MapMemory(sys::SH2Bus &bus);
 
     void UpdateClockRatios(const sys::ClockRatios &clockRatios);
@@ -258,6 +262,7 @@ private:
     CBOutputSample m_cbOutputSample;
     CBTriggerSoundRequestInterrupt m_cbTriggerSoundRequestInterrupt;
     CBSendMidiOutputMessage m_cbSendMidiOutputMessage;
+    CBSCSPWRAMWrite m_cbWRAMWrite;
 
     std::queue<QueuedMidiMessage> m_midiInputQueue;
     uint64 m_nextMidiTime;
@@ -291,7 +296,9 @@ private:
     FLATTEN void WriteWRAM(uint32 address, T value) {
         static_assert(!std::is_same_v<T, uint32>, "Invalid SCSP WRAM write size");
         // TODO: handle memory size bit
-        util::WriteBE<T>(&m_WRAM[address & 0x7FFFF], value);
+        address &= 0x7FFFF;
+        util::WriteBE<T>(&m_WRAM[address], value);
+        m_cbWRAMWrite(address, sizeof(T));
     }
 
     template <mem_primitive T>
