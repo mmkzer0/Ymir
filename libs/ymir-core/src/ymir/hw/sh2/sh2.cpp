@@ -271,6 +271,7 @@ void SH2::Reset(bool hard, bool watchdogInitiated) {
     m_delaySlot = false;
 
     m_cache.Reset();
+    ClearCachedBlocks();
 }
 
 void SH2::MapMemory(sys::SH2Bus &bus) {
@@ -419,6 +420,16 @@ void SH2::PurgeCache() {
     m_cache.Purge();
 }
 
+void SH2::PurgeBlockCache() {
+    ClearCachedBlocks();
+}
+
+void SH2::ClearCachedBlocks() {
+    m_cachedBlocksByPC.clear();
+    m_cachedBlocks.clear();
+    m_cachedBlockCursor = {};
+}
+
 // -----------------------------------------------------------------------------
 // Save states
 
@@ -491,6 +502,7 @@ void SH2::LoadState(const state::SH2State &state) {
     SBYCR.u8 = state.SBYCR;
     m_sleep = state.sleep;
 
+    ClearCachedBlocks();
     m_intrPending = !m_delaySlot && INTC.pending.level > SR.ILevel;
 }
 
@@ -1947,6 +1959,19 @@ FORCE_INLINE uint64 SH2::EnterException(uint8 vectorNumber) {
     return cycles;
 }
 
+template <bool enableSH2Cache>
+void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC) {
+    block.startPC = startPC;
+    block.instructions.clear();
+    block.instructions.reserve(kCachedBlockMaxInstructions);
+
+    uint32 buildPC = startPC;
+    for (size_t i = 0; i < kCachedBlockMaxInstructions; ++i) {
+        block.instructions.push_back(PeekInstruction<enableSH2Cache>(buildPC));
+        buildPC += 2;
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Instruction interpreters
 
@@ -1981,7 +2006,42 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
 
     // TODO: emulate or approximate fetch - decode - execute - memory access - writeback pipeline
 
-    const uint16 instr = FetchInstruction<enableSH2Cache>(PC);
+    uint16 instr = 0;
+    if constexpr (enableBlockCache && !debug) {
+        if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC) {
+            auto it = m_cachedBlocksByPC.find(PC);
+            if (it == m_cachedBlocksByPC.end()) {
+                CachedBlock block{};
+                BuildCachedBlock<enableSH2Cache>(block, PC);
+
+                const size_t blockIndex = m_cachedBlocks.size();
+                m_cachedBlocks.emplace_back(std::move(block));
+                it = m_cachedBlocksByPC.emplace(PC, blockIndex).first;
+            }
+
+            m_cachedBlockCursor.blockIndex = it->second;
+            m_cachedBlockCursor.instructionIndex = 0;
+            m_cachedBlockCursor.expectedPC = PC;
+            m_cachedBlockCursor.valid = true;
+        }
+
+        CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
+        if (block.instructions.empty()) {
+            BuildCachedBlock<enableSH2Cache>(block, block.startPC);
+        }
+
+        // Keep regular fetch semantics for timing/side effects, then validate cached opcode.
+        instr = FetchInstruction<enableSH2Cache>(PC);
+        if (block.instructions[0] != instr) {
+            BuildCachedBlock<enableSH2Cache>(block, block.startPC);
+        }
+
+        // Phase 2 requirement: execute exactly one instruction per InterpretNext() invocation.
+        m_cachedBlockCursor.valid = false;
+    } else {
+        instr = FetchInstruction<enableSH2Cache>(PC);
+    }
+
     TraceExecuteInstruction<debug>(m_tracer, PC, instr, m_delaySlot);
 
     const OpcodeType opcode = DecodeTable::s_instance.opcodes[m_delaySlot][instr];
@@ -3108,7 +3168,8 @@ FORCE_INLINE uint64 SH2::ANDI(const DecodedArgs &args) {
 template <bool debug, bool enableSH2Cache, bool delaySlot>
 FORCE_INLINE uint64 SH2::ANDM(const DecodedArgs &args) {
     const uint32 address = GBR + R[0];
-    const uint64 cycles = AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 1;
+    const uint64 cycles =
+        AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 1;
     uint8 tmp = MemReadByte<enableSH2Cache>(address);
     tmp &= args.dispImm;
     MemWriteByte<debug, enableSH2Cache>(address, tmp);
@@ -3162,7 +3223,8 @@ FORCE_INLINE uint64 SH2::ORI(const DecodedArgs &args) {
 template <bool debug, bool enableSH2Cache, bool delaySlot>
 FORCE_INLINE uint64 SH2::ORM(const DecodedArgs &args) {
     const uint32 address = GBR + R[0];
-    const uint64 cycles = AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 1;
+    const uint64 cycles =
+        AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 1;
     uint8 tmp = MemReadByte<enableSH2Cache>(address);
     tmp |= args.dispImm;
     MemWriteByte<debug, enableSH2Cache>(address, tmp);
@@ -3348,7 +3410,8 @@ FORCE_INLINE uint64 SH2::XORI(const DecodedArgs &args) {
 template <bool debug, bool enableSH2Cache, bool delaySlot>
 FORCE_INLINE uint64 SH2::XORM(const DecodedArgs &args) {
     const uint32 address = GBR + R[0];
-    const uint64 cycles = AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 1;
+    const uint64 cycles =
+        AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 1;
     uint8 tmp = MemReadByte<enableSH2Cache>(address);
     tmp ^= args.dispImm;
     MemWriteByte<debug, enableSH2Cache>(address, tmp);
@@ -3607,7 +3670,8 @@ FORCE_INLINE uint64 SH2::CMPSTR(const DecodedArgs &args) {
 template <bool debug, bool enableSH2Cache, bool delaySlot>
 FORCE_INLINE uint64 SH2::TAS(const DecodedArgs &args) {
     const uint32 address = R[args.rn];
-    const uint64 cycles = AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 2;
+    const uint64 cycles =
+        AccessCycles<false, enableSH2Cache>(address) + AccessCycles<true, enableSH2Cache>(address) + 2;
     // TODO: enable bus lock on this read
     const uint8 tmp = MemReadByte<false>(address);
     SR.T = tmp == 0;
@@ -3751,7 +3815,8 @@ template <bool debug, bool enableSH2Cache>
 FORCE_INLINE uint64 SH2::RTE() {
     const uint32 address1 = R[15];
     const uint32 address2 = R[15] + 4;
-    const uint64 cycles = AccessCycles<false, enableSH2Cache>(address1) + AccessCycles<false, enableSH2Cache>(address2) + 2;
+    const uint64 cycles =
+        AccessCycles<false, enableSH2Cache>(address1) + AccessCycles<false, enableSH2Cache>(address2) + 2;
     // rte
     SetupDelaySlot(MemReadLong<enableSH2Cache>(address1));
     SR.u32 = MemReadLong<enableSH2Cache>(address2) & 0x000003F3;
