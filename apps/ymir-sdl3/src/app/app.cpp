@@ -438,6 +438,7 @@ int App::Run(const CommandLineOptions &options) {
     devlog::debug<grp::base>("Profile directory: {}", m_context.profile.GetPath(ProfilePath::Root));
 
     // Apply settings
+    m_context.saturn.instance->EnableSH2CacheEmulation(settings.system.emulateSH2Cache);
     m_context.saturn.instance->UsePreferredRegion();
     m_context.EnqueueEvent(events::emu::LoadInternalBackupMemory());
     EnableRewindBuffer(settings.general.enableRewindBuffer);
