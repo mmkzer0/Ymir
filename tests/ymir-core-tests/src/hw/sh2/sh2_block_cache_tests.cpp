@@ -9,6 +9,8 @@ namespace sh2_block_cache {
 using namespace ymir;
 
 inline constexpr uint16 instrNOP = 0x0009;
+inline constexpr uint16 instrBRAminus1 = 0xAFFF;
+inline constexpr uint16 instrBRAminus4 = 0xAFFC;
 inline constexpr uint32 kProgramStart = 0x0000'1000;
 inline constexpr uint32 kProgramLength = 32;
 
@@ -198,6 +200,92 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cached interpreter reuses built b
     CHECK(counters.normalRead16 == normalReadsAfterFirstStep);
 }
 
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cached interpreter reuses same-page entries in page bucket chains",
+                             "[sh2][block-cache][lookup]") {
+    ResetState();
+
+    constexpr uint32 entryA = kProgramStart;
+    constexpr uint32 entryB = kProgramStart + 0x0200;
+    constexpr uint32 instructionCount = ((entryB - kProgramStart) / 2u) + 64u;
+    SetInstructionSpan(kProgramStart, instrNOP, instructionCount);
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entryA + 2u);
+    const uint32 peekReadsAfterEntryA = counters.peekRead16;
+
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entryB + 2u);
+    CHECK(counters.peekRead16 > peekReadsAfterEntryA);
+    const uint32 peekReadsAfterEntryB = counters.peekRead16;
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 == peekReadsAfterEntryB);
+
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 == peekReadsAfterEntryB);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject,
+                             "SH2 cached interpreter keeps delay-slot and non-delay entries separate per PC",
+                             "[sh2][block-cache][lookup][delay-slot]") {
+    ResetState();
+
+    constexpr uint32 branchPC = kProgramStart;
+    constexpr uint32 sharedPC = branchPC + 2u;
+    constexpr uint32 loopBranchPC = branchPC + 4u;
+    constexpr uint32 loopDelayPC = branchPC + 6u;
+
+    SetInstruction(branchPC, instrBRAminus1);
+    SetInstruction(sharedPC, instrNOP);
+    SetInstruction(loopBranchPC, instrBRAminus4);
+    SetInstruction(loopDelayPC, instrNOP);
+
+    probe.PC() = branchPC;
+
+    RunStep<false, false, true>(); // Build (PC=branchPC, delay=false)
+    CHECK(probe.PC() == sharedPC);
+    CHECK(probe.IsInDelaySlot() == true);
+    const uint32 peekReadsAfterBranch = counters.peekRead16;
+
+    RunStep<false, false, true>(); // Build (PC=sharedPC, delay=true)
+    CHECK(probe.PC() == sharedPC);
+    CHECK(probe.IsInDelaySlot() == false);
+    CHECK(counters.peekRead16 > peekReadsAfterBranch);
+    const uint32 peekReadsAfterDelaySlotBuild = counters.peekRead16;
+
+    RunStep<false, false, true>(); // Build (PC=sharedPC, delay=false)
+    CHECK(probe.PC() == loopBranchPC);
+    CHECK(probe.IsInDelaySlot() == false);
+    CHECK(counters.peekRead16 > peekReadsAfterDelaySlotBuild);
+
+    // Complete one loop iteration to reach the same two states again.
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == loopDelayPC);
+    CHECK(probe.IsInDelaySlot() == true);
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == branchPC);
+    CHECK(probe.IsInDelaySlot() == false);
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == sharedPC);
+    CHECK(probe.IsInDelaySlot() == true);
+
+    const uint32 peekReadsBeforeDelaySlotReuse = counters.peekRead16;
+    RunStep<false, false, true>(); // Reuse (PC=sharedPC, delay=true)
+    CHECK(probe.PC() == sharedPC);
+    CHECK(probe.IsInDelaySlot() == false);
+    CHECK(counters.peekRead16 == peekReadsBeforeDelaySlotReuse);
+
+    const uint32 peekReadsBeforeNonDelayReuse = counters.peekRead16;
+    RunStep<false, false, true>(); // Reuse (PC=sharedPC, delay=false)
+    CHECK(probe.PC() == loopBranchPC);
+    CHECK(probe.IsInDelaySlot() == false);
+    CHECK(counters.peekRead16 == peekReadsBeforeNonDelayReuse);
+}
+
 TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cache emulation keeps fetch side effects with cached interpreter",
                              "[sh2][block-cache][sh2-cache-combo]") {
     ResetState();
@@ -254,6 +342,35 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 block cache rebuilds after same-p
     RunStep<false, false, true>();
 
     CHECK(counters.peekRead16 > peekReadsAfterFirstStep);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 page-LUT lookup keeps invalidation generation behavior",
+                             "[sh2][block-cache][lookup][invalidation]") {
+    ResetState();
+
+    constexpr uint32 entryA = kProgramStart;
+    constexpr uint32 entryB = kProgramStart + 0x80;
+    constexpr uint32 instructionCount = ((entryB - kProgramStart) / 2u) + 64u;
+    SetInstructionSpan(kProgramStart, instrNOP, instructionCount);
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    const uint32 peekReadsAfterInitialBuild = counters.peekRead16;
+
+    sh2.InvalidateBlockCacheRange(kProgramStart + 0x1000, 2);
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 == peekReadsAfterInitialBuild);
+
+    const uint32 peekReadsBeforeSamePageInvalidation = counters.peekRead16;
+    sh2.InvalidateBlockCacheRange(kProgramStart + 0x20, 2);
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 > peekReadsBeforeSamePageInvalidation);
 }
 
 } // namespace sh2_block_cache
