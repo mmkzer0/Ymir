@@ -924,6 +924,7 @@ private:
         uint32 startBusPage = 0;
         uint32 busPageGeneration = 0;
         std::array<uint16, kCachedBlockMaxInstructions> instructions{};
+        std::array<OpcodeType, kCachedBlockMaxInstructions> decodedOpcodes{};
         size_t instructionCount = 0;
         sint32 lookupOffsetNext = -1;
     };

@@ -2156,6 +2156,7 @@ void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySl
         const uint16 instr = PeekInstruction<enableSH2Cache>(buildPC);
         const OpcodeType opcode = DecodeTable::s_instance.opcodes[decodeDelaySlot][instr];
         block.instructions[block.instructionCount] = instr;
+        block.decodedOpcodes[block.instructionCount] = opcode;
         ++block.instructionCount;
 
         // A delay-slot entrypoint is always a single-op block.
@@ -2209,6 +2210,8 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     // TODO: emulate or approximate fetch - decode - execute - memory access - writeback pipeline
 
     uint16 instr = 0;
+    OpcodeType opcode = OpcodeType::Illegal;
+    bool hasCachedOpcode = false;
     if constexpr (enableBlockCache && !debug) {
         const bool currentDelaySlot = m_delaySlot;
         bool useCachedBlockSource = true;
@@ -2248,12 +2251,15 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
 
             // Phase 4.2 fast path: execute cached opcodes directly; coherency is maintained by bus-driven invalidation.
             instr = block.instructions[m_cachedBlockCursor.instructionIndex];
+            opcode = block.decodedOpcodes[m_cachedBlockCursor.instructionIndex];
+            hasCachedOpcode = true;
             if constexpr (enableSH2Cache) {
                 // Keep SH-2 cache emulation side effects on each instruction fetch while reusing the cached decode
                 // path.
                 const uint16 fetchedInstr = FetchInstruction<true>(PC);
                 if (instr != fetchedInstr) [[unlikely]] {
                     instr = fetchedInstr;
+                    opcode = DecodeTable::s_instance.opcodes[currentDelaySlot][instr];
                     m_cachedBlockCursor.valid = false;
                 }
             }
@@ -2277,7 +2283,9 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
 
     TraceExecuteInstruction<debug>(m_tracer, PC, instr, m_delaySlot);
 
-    const OpcodeType opcode = DecodeTable::s_instance.opcodes[m_delaySlot][instr];
+    if (!hasCachedOpcode) {
+        opcode = DecodeTable::s_instance.opcodes[m_delaySlot][instr];
+    }
     const DecodedArgs &args = DecodeTable::s_instance.args[instr];
 
     // TODO: check program execution
