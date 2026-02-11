@@ -383,6 +383,7 @@ private:
     static void MainBusWriteObserver(uint32 address, uint32 size, bool poke, void *ctx);
     static void SCSPWRAMWriteObserver(uint32 address, uint32 size, void *ctx);
 
+    friend struct SaturnExecutableRangeTestAccess;
     static bool IsExecutableMainBusRange(uint32 address, uint32 size);
 
     // -------------------------------------------------------------------------

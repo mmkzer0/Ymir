@@ -483,6 +483,13 @@ void SH2::InvalidateBlockCacheRange(uint32 address, uint32 size) {
     const uint32 startPage = static_cast<uint32>(startAddress >> kCachedBlockPageBits);
     const uint32 endPage = static_cast<uint32>(endAddress >> kCachedBlockPageBits);
 
+    // Most writes are small and stay within one 4KB page.
+    if (startPage == endPage) [[likely]] {
+        ++m_cachedBlockPageGenerations[startPage];
+        invalidateCursorIfPageOverlaps(startPage, startPage);
+        return;
+    }
+
     for (uint32 page = startPage; page <= endPage; ++page) {
         ++m_cachedBlockPageGenerations[page];
     }
@@ -547,6 +554,7 @@ FORCE_INLINE size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
     // - walk only the relevant offset chain in that page+delay bucket
     const uint32 bucket = GetCachedBlockBucket(pc, delaySlot);
     const uint32 offset = GetCachedBlockOffset(pc);
+    const uint32 page = bucket >> 1u;
     sint32 lookupBucketIndex = m_cachedBlockBucketHeads[bucket];
 
     CachedBlockLookupBucket *lookupBucket = nullptr;
@@ -561,9 +569,9 @@ FORCE_INLINE size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
             }
             blockIndex = block.lookupOffsetNext;
         }
-    } else {
+    } else [[unlikely]] {
         const uint32 newLookupBucketIndex = AllocateCachedBlockLookupBucket();
-        if (newLookupBucketIndex == kInvalidLookupBucketIndex) {
+        if (newLookupBucketIndex == kInvalidLookupBucketIndex) [[unlikely]] {
             // Preserve forward progress in low-memory situations by letting caller fall back to uncached fetch.
             return kInvalidCachedBlockIndex;
         }
@@ -578,7 +586,7 @@ FORCE_INLINE size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
     CachedBlock block{};
     block.startPC = pc;
     block.startDelaySlot = delaySlot;
-    block.startBusPage = GetCachedBlockPage(pc);
+    block.startBusPage = page;
     block.lookupOffsetNext = lookupBucket->offsetHeads[offset];
 
     const size_t blockIndex = m_cachedBlocks.size();
@@ -2208,7 +2216,7 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
         if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC ||
             m_cachedBlockCursor.expectedDelaySlot != currentDelaySlot) {
             const size_t blockIndex = FindOrCreateCachedBlock(PC, currentDelaySlot);
-            if (blockIndex == kInvalidCachedBlockIndex) {
+            if (blockIndex == kInvalidCachedBlockIndex) [[unlikely]] {
                 // Graceful fallback if lookup pool growth fails: continue with uncached fetch path.
                 m_cachedBlockCursor.valid = false;
                 useCachedBlockSource = false;

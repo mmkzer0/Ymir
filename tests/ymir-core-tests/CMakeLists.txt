@@ -1,6 +1,7 @@
 ## Create the executable target
 add_executable(ymir-core-tests
     src/hw/scu/scu_dsp_tests.cpp
+    src/sys/saturn_block_cache_observer_tests.cpp
 
     src/hw/sh2/sh2_block_cache_tests.cpp
     src/hw/sh2/sh2_disasm_tests.cpp
