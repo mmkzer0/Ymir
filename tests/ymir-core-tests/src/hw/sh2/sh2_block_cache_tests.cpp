@@ -432,4 +432,84 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 repeated clear and rebuild stays 
     }
 }
 
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 reuse window extends past old 16-op boundary",
+                             "[sh2][block-cache][cap32]") {
+    ResetState();
+    SetInstructionSpan(kProgramStart, instrNOP, 128);
+    probe.PC() = kProgramStart;
+
+    const uint32 peekReadsBeforeBuild = counters.peekRead16;
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == kProgramStart + 2u);
+    CHECK(counters.peekRead16 > peekReadsBeforeBuild);
+    const uint32 peekReadsAfterBuild = counters.peekRead16;
+
+    // With the cap at 32 ops, no rebuild should occur while stepping through the first 32-entry window.
+    for (uint32 i = 1; i < 32; ++i) {
+        RunStep<false, false, true>();
+        CHECK(probe.PC() == kProgramStart + (i + 1u) * 2u);
+        CHECK(counters.peekRead16 == peekReadsAfterBuild);
+    }
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at page boundary",
+                             "[sh2][block-cache][cap32]") {
+    ResetState();
+
+    constexpr uint32 entry = kProgramStart + 0xFF0u;
+    SetInstructionSpan(entry, instrNOP, 128);
+    probe.PC() = entry;
+
+    const uint32 peekReadsBeforeBuild = counters.peekRead16;
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entry + 2u);
+    CHECK(counters.peekRead16 > peekReadsBeforeBuild);
+    const uint32 peekReadsAfterBuild = counters.peekRead16;
+
+    // From 0x...FF0 to 0x...FFE there are 8 instructions; crossing to next page should trigger a rebuild.
+    for (uint32 i = 1; i < 8; ++i) {
+        RunStep<false, false, true>();
+        CHECK(counters.peekRead16 == peekReadsAfterBuild);
+    }
+    CHECK(probe.PC() == entry + 16u);
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entry + 18u);
+    CHECK(counters.peekRead16 > peekReadsAfterBuild);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at barriers",
+                             "[sh2][block-cache][cap32]") {
+    ResetState();
+
+    constexpr uint32 entry = kProgramStart;
+    SetInstruction(entry + 0u, instrNOP);
+    SetInstruction(entry + 2u, instrNOP);
+    SetInstruction(entry + 4u, instrBRAminus1);
+    SetInstruction(entry + 6u, instrNOP);
+    SetInstruction(entry + 8u, instrNOP);
+    probe.PC() = entry;
+
+    const uint32 peekReadsBeforeBuild = counters.peekRead16;
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entry + 2u);
+    CHECK(counters.peekRead16 > peekReadsBeforeBuild);
+    const uint32 peekReadsAfterBuild = counters.peekRead16;
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entry + 4u);
+    CHECK(counters.peekRead16 == peekReadsAfterBuild);
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entry + 6u);
+    CHECK(probe.IsInDelaySlot() == true);
+    CHECK(counters.peekRead16 == peekReadsAfterBuild);
+
+    // Branch delay-slot entrypoint should build a fresh single-op block.
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == entry + 6u);
+    CHECK(probe.IsInDelaySlot() == false);
+    CHECK(counters.peekRead16 > peekReadsAfterBuild);
+}
+
 } // namespace sh2_block_cache
