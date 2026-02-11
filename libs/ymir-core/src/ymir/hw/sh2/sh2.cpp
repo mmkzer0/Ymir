@@ -457,6 +457,20 @@ void SH2::InvalidateBlockCacheRange(uint32 address, uint32 size) {
 
     address &= kCachedBlockAddressMask;
 
+    const auto invalidateCursorIfPageOverlaps = [&](uint32 startPage, uint32 endPage) {
+        if (!m_cachedBlockCursor.valid) {
+            return;
+        }
+        if (m_cachedBlockCursor.blockIndex >= m_cachedBlocks.size()) {
+            m_cachedBlockCursor.valid = false;
+            return;
+        }
+        const uint32 cursorPage = m_cachedBlocks[m_cachedBlockCursor.blockIndex].startBusPage;
+        if (cursorPage >= startPage && cursorPage <= endPage) {
+            m_cachedBlockCursor.valid = false;
+        }
+    };
+
     const uint64 addressRangeSize = static_cast<uint64>(kCachedBlockAddressMask) + 1ull;
     if (size >= addressRangeSize) {
         for (auto &generation : m_cachedBlockPageGenerations) {
@@ -477,7 +491,8 @@ void SH2::InvalidateBlockCacheRange(uint32 address, uint32 size) {
         ++m_cachedBlockPageGenerations[page];
     }
 
-    m_cachedBlockCursor.valid = false;
+    // Keep the current cursor when writes touch unrelated pages to preserve block-cache hit rate.
+    invalidateCursorIfPageOverlaps(startPage, endPage);
 }
 
 void SH2::ClearCachedBlocks() {
@@ -2088,10 +2103,10 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     uint16 instr = 0;
     if constexpr (enableBlockCache && !debug) {
         const bool currentDelaySlot = m_delaySlot;
-        const uint64 blockKey = MakeCachedBlockKey(PC, currentDelaySlot);
 
         if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC ||
             m_cachedBlockCursor.expectedDelaySlot != currentDelaySlot) {
+            const uint64 blockKey = MakeCachedBlockKey(PC, currentDelaySlot);
             auto it = m_cachedBlocksByPC.find(blockKey);
             if (it == m_cachedBlocksByPC.end()) {
                 CachedBlock block{};
@@ -2110,15 +2125,9 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
         }
 
         CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
-        if (block.instructionCount == 0) {
-            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-            m_cachedBlockCursor.instructionIndex = 0;
-        } else if (m_cachedBlockCursor.instructionIndex == 0 &&
-                   (block.startPC != PC || block.startDelaySlot != currentDelaySlot)) {
-            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-            m_cachedBlockCursor.instructionIndex = 0;
-        }
-        if (block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage]) {
+        if (m_cachedBlockCursor.instructionIndex == 0 &&
+            (block.instructionCount == 0 || block.startPC != PC || block.startDelaySlot != currentDelaySlot ||
+             block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage])) {
             BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
             m_cachedBlockCursor.instructionIndex = 0;
         }
@@ -2127,18 +2136,12 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
             m_cachedBlockCursor.instructionIndex = 0;
         }
 
-        // Keep regular fetch semantics for timing/side effects, then validate cached opcode.
-        const uint16 fetchedInstr = FetchInstruction<enableSH2Cache>(PC);
+        // Phase 4.2 fast path: execute cached opcodes directly; coherency is maintained by bus-driven invalidation.
         instr = block.instructions[m_cachedBlockCursor.instructionIndex];
-        if (instr != fetchedInstr) {
-            // Rebuild only on block entry; for mid-block mismatches, execute fetched opcode and drop the cursor.
-            if (m_cachedBlockCursor.instructionIndex == 0) {
-                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-                m_cachedBlockCursor.instructionIndex = 0;
-                instr = block.instructions[0];
-            }
-            if (instr != fetchedInstr) {
-                // Fallback for edge cases where the peek path does not match a fetch result.
+        if constexpr (enableSH2Cache) {
+            // Keep SH-2 cache emulation side effects on each instruction fetch while reusing the cached decode path.
+            const uint16 fetchedInstr = FetchInstruction<true>(PC);
+            if (instr != fetchedInstr) [[unlikely]] {
                 instr = fetchedInstr;
                 m_cachedBlockCursor.valid = false;
             }

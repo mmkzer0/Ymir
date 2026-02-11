@@ -84,10 +84,6 @@ Saturn::Saturn()
             devlog::debug<grp::bus>("Unhandled 32-bit main bus write to {:07X} = {:07X}", address, value);
         });
 
-    mainBus.SetWriteObserver(this, [](uint32 address, uint32 size, bool poke, void *ctx) {
-        static_cast<Saturn *>(ctx)->OnMainBusWrite(address, size, poke);
-    });
-
     SH1Bus.MapNormal(
         0x000'0000, 0xFFF'FFFF, nullptr,
         [](uint32 address, void *) -> uint8 {
@@ -122,9 +118,6 @@ Saturn::Saturn()
                      SMPC.CbTriggerOptimizedINTBACKRead, SMPC.CbTriggerVBlankIN);
     SMPC.MapCallbacks(SCU.CbTriggerSystemManager, SCU.CbTriggerPad, VDP.CbExternalLatch);
     SCSP.MapCallbacks(SCU.CbTriggerSoundRequest);
-    SCSP.SetWRAMWriteCallback({this, [](uint32 address, uint32 size, void *ctx) {
-                                   static_cast<Saturn *>(ctx)->OnSCSPWRAMWrite(address, size);
-                               }});
     SH1.SetSCI0Callbacks(CDDrive.CbSerialRx, CDDrive.CbSerialTx);
     CDDrive.MapCallbacks(SH1.CbSetCOMSYNCn, SH1.CbSetCOMREQn, SH1.CbCDBDataSector, SCSP.CbCDDASector,
                          YGR.CbSectorTransferDone);
@@ -788,11 +781,16 @@ bool Saturn::IsExecutableMainBusRange(uint32 address, uint32 size) {
            overlapsRange(0x5F0'0000, 0x5F7'FFFF);   // VDP2 CRAM
 }
 
+void Saturn::MainBusWriteObserver(uint32 address, uint32 size, bool poke, void *ctx) {
+    static_cast<Saturn *>(ctx)->OnMainBusWrite(address, size, poke);
+}
+
+void Saturn::SCSPWRAMWriteObserver(uint32 address, uint32 size, void *ctx) {
+    static_cast<Saturn *>(ctx)->OnSCSPWRAMWrite(address, size);
+}
+
 void Saturn::OnMainBusWrite(uint32 address, uint32 size, bool poke) {
     (void)poke;
-    if (!m_systemFeatures.enableBlockCache) {
-        return;
-    }
     if (!IsExecutableMainBusRange(address, size)) {
         return;
     }
@@ -802,10 +800,6 @@ void Saturn::OnMainBusWrite(uint32 address, uint32 size, bool poke) {
 }
 
 void Saturn::OnSCSPWRAMWrite(uint32 address, uint32 size) {
-    if (!m_systemFeatures.enableBlockCache) {
-        return;
-    }
-
     // SCSP-internal DMA and M68K writes bypass the main bus write path.
     const uint32 mainBusAddress = 0x5A0'0000 + (address & 0x7FFFF);
     masterSH2.InvalidateBlockCacheRange(mainBusAddress, size);
@@ -857,6 +851,15 @@ void Saturn::UpdateSH2BlockCache(bool enabled) {
     }
 
     m_systemFeatures.enableBlockCache = enabled;
+    if (enabled) {
+        // Install invalidation observers only while the block cache is active to minimize write-path overhead.
+        mainBus.SetWriteObserver(this, &Saturn::MainBusWriteObserver);
+        SCSP.SetWRAMWriteCallback({this, &Saturn::SCSPWRAMWriteObserver});
+    } else {
+        mainBus.SetWriteObserver(nullptr, nullptr);
+        SCSP.SetWRAMWriteCallback({});
+    }
+
     // Runtime mode switches must drop decoded state to avoid using stale opcodes.
     masterSH2.PurgeBlockCache();
     slaveSH2.PurgeBlockCache();

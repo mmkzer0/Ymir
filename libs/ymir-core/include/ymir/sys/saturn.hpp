@@ -380,6 +380,9 @@ private:
     // Observes SCSP WRAM writes that bypass the main bus write path.
     void OnSCSPWRAMWrite(uint32 address, uint32 size);
 
+    static void MainBusWriteObserver(uint32 address, uint32 size, bool poke, void *ctx);
+    static void SCSPWRAMWriteObserver(uint32 address, uint32 size, void *ctx);
+
     static bool IsExecutableMainBusRange(uint32 address, uint32 size);
 
     // -------------------------------------------------------------------------
