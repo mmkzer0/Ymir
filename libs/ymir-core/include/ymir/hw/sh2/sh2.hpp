@@ -903,7 +903,7 @@ private:
     // Cached interpreter blocks
 
     // Phase 3 keeps conservative blocks to maximize correctness and ease debugging.
-    static constexpr size_t kCachedBlockMaxInstructions = 16;
+    static constexpr size_t kCachedBlockMaxInstructions = 32;
     static constexpr uint32 kCachedBlockPageSize = 0x1000;
     static constexpr uint32 kCachedBlockPageMask = ~(kCachedBlockPageSize - 1u);
     static constexpr uint32 kCachedBlockPageBits = 12;
