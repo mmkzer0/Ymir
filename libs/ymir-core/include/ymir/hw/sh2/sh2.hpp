@@ -41,7 +41,6 @@
 #include <iosfwd>
 #include <map>
 #include <set>
-#include <unordered_map>
 #include <vector>
 
 namespace ymir::sh2 {
@@ -908,9 +907,12 @@ private:
     static constexpr uint32 kCachedBlockPageSize = 0x1000;
     static constexpr uint32 kCachedBlockPageMask = ~(kCachedBlockPageSize - 1u);
     static constexpr uint32 kCachedBlockPageBits = 12;
+    static constexpr uint32 kCachedBlockPageOffsetMask = kCachedBlockPageSize - 1u;
+    static constexpr size_t kCachedBlockPageWordCount = kCachedBlockPageSize / sizeof(uint16);
     static constexpr uint32 kCachedBlockAddressMask = 0x07FF'FFFF;
     static constexpr size_t kCachedBlockPageCount =
         (static_cast<size_t>(kCachedBlockAddressMask) + 1ull) / kCachedBlockPageSize;
+    static constexpr size_t kInvalidCachedBlockIndex = static_cast<size_t>(-1);
 
     struct CachedBlock {
         uint32 startPC = 0;
@@ -919,6 +921,11 @@ private:
         uint32 busPageGeneration = 0;
         std::array<uint16, kCachedBlockMaxInstructions> instructions{};
         size_t instructionCount = 0;
+        sint32 lookupOffsetNext = -1;
+    };
+
+    struct CachedBlockLookupBucket {
+        std::array<sint32, kCachedBlockPageWordCount> offsetHeads{};
     };
 
     struct CachedBlockCursor {
@@ -929,13 +936,19 @@ private:
         bool valid = false;
     };
 
-    // Key format: (PC << 1) | delaySlotBit
-    std::unordered_map<uint64, size_t> m_cachedBlocksByPC;
+    // Bucket index format: (busPage << 1) | delaySlotBit
+    std::array<sint32, kCachedBlockPageCount * 2> m_cachedBlockBucketHeads{};
+    std::vector<CachedBlockLookupBucket> m_cachedBlockLookupBuckets;
     std::vector<CachedBlock> m_cachedBlocks;
     CachedBlockCursor m_cachedBlockCursor;
     std::array<uint32, kCachedBlockPageCount> m_cachedBlockPageGenerations{};
 
     void ClearCachedBlocks();
+    FORCE_INLINE uint32 GetCachedBlockPage(uint32 pc) const;
+    FORCE_INLINE uint32 GetCachedBlockBucket(uint32 pc, bool delaySlot) const;
+    FORCE_INLINE uint32 GetCachedBlockOffset(uint32 pc) const;
+    size_t FindCachedBlockIndex(uint32 pc, bool delaySlot) const;
+    size_t FindOrCreateCachedBlock(uint32 pc, bool delaySlot);
 
     template <bool enableSH2Cache>
     void BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySlot);
