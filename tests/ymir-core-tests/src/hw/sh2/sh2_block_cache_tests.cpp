@@ -11,6 +11,11 @@ using namespace ymir;
 inline constexpr uint16 instrNOP = 0x0009;
 inline constexpr uint16 instrBRAminus1 = 0xAFFF;
 inline constexpr uint16 instrBRAminus4 = 0xAFFC;
+inline constexpr uint16 instrMOVI_R0_1 = 0xE001;
+inline constexpr uint16 instrMOVI_R0_2 = 0xE002;
+inline constexpr uint16 instrMOVI_R0_3 = 0xE003;
+inline constexpr uint16 instrMOVI_R0_4 = 0xE004;
+inline constexpr uint16 instrMOVI_R0_7F = 0xE07F;
 inline constexpr uint32 kProgramStart = 0x0000'1000;
 inline constexpr uint32 kProgramLength = 32;
 
@@ -200,6 +205,39 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cached interpreter reuses built b
     CHECK(counters.normalRead16 == normalReadsAfterFirstStep);
 }
 
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cached interpreter reuses predecoded opcode entries",
+                             "[sh2][block-cache][fast-path][predecode]") {
+    ResetState();
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+    SetInstruction(kProgramStart + 0u, instrMOVI_R0_1);
+    SetInstruction(kProgramStart + 2u, instrMOVI_R0_2);
+    SetInstruction(kProgramStart + 4u, instrMOVI_R0_3);
+    SetInstruction(kProgramStart + 6u, instrMOVI_R0_4);
+    probe.PC() = kProgramStart;
+
+    const uint32 peekReadsBeforeBuild = counters.peekRead16;
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == kProgramStart + 2u);
+    CHECK(probe.R(0) == 1u);
+    CHECK(counters.peekRead16 > peekReadsBeforeBuild);
+    const uint32 peekReadsAfterBuild = counters.peekRead16;
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == kProgramStart + 4u);
+    CHECK(probe.R(0) == 2u);
+    CHECK(counters.peekRead16 == peekReadsAfterBuild);
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == kProgramStart + 6u);
+    CHECK(probe.R(0) == 3u);
+    CHECK(counters.peekRead16 == peekReadsAfterBuild);
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == kProgramStart + 8u);
+    CHECK(probe.R(0) == 4u);
+    CHECK(counters.peekRead16 == peekReadsAfterBuild);
+}
+
 TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cached interpreter reuses same-page entries in page bucket chains",
                              "[sh2][block-cache][lookup]") {
     ResetState();
@@ -310,6 +348,31 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cache emulation keeps fetch side 
     CHECK(probe.PC() == pcStart + 4);
     CHECK(counters.peekRead16 == peekReadsAfterFirstStep);
     CHECK(counters.normalRead16 > normalReadsAfterFirstStep);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cache+block cache falls back to fetched opcode on mismatch",
+                             "[sh2][block-cache][sh2-cache-combo][predecode]") {
+    ResetState();
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+    probe.PC() = 0xA000'1000;
+
+    RunStep<false, true, true>();
+    CHECK(probe.PC() == 0xA000'1002u);
+    const uint32 peekReadsAfterInitialBuild = counters.peekRead16;
+    const uint32 normalReadsAfterInitialBuild = counters.normalRead16;
+
+    // Modify backing instruction memory without explicit invalidation.
+    SetInstruction(kProgramStart + 2u, instrMOVI_R0_7F);
+
+    RunStep<false, true, true>();
+    CHECK(probe.PC() == 0xA000'1004u);
+    CHECK(probe.R(0) == 0x7Fu);
+    CHECK(counters.peekRead16 == peekReadsAfterInitialBuild);
+    CHECK(counters.normalRead16 > normalReadsAfterInitialBuild);
+
+    const uint32 peekReadsBeforeRebuild = counters.peekRead16;
+    RunStep<false, true, true>();
+    CHECK(counters.peekRead16 > peekReadsBeforeRebuild);
 }
 
 TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 block cache cursor survives unrelated page invalidation",
