@@ -49,6 +49,33 @@ namespace grp {
 
 } // namespace grp
 
+namespace {
+
+    static constexpr uint32 kMainBusAddressMask = 0x07FF'FFFF;
+    static constexpr uint32 kMainBusPageBits = 12;
+
+    struct ExecutablePageRange {
+        uint32 start;
+        uint32 end;
+    };
+
+    // Main-bus executable ranges reduced to 4KB pages.
+    // Block-cache invalidation is page-granular, so page overlap is sufficient and cheaper than full address overlap checks.
+    static constexpr ExecutablePageRange kExecutableMainBusPageRanges[] = {
+        {0x020'0000 >> kMainBusPageBits, 0x02F'FFFF >> kMainBusPageBits}, // Low WRAM
+        {0x5A0'0000 >> kMainBusPageBits, 0x5A7'FFFF >> kMainBusPageBits}, // SCSP WRAM
+        {0x5C0'0000 >> kMainBusPageBits, 0x5CF'FFFF >> kMainBusPageBits}, // VDP1 VRAM + framebuffer RAM
+        {0x5E0'0000 >> kMainBusPageBits, 0x5F7'FFFF >> kMainBusPageBits}, // VDP2 VRAM + CRAM
+        {0x600'0000 >> kMainBusPageBits, 0x7FF'FFFF >> kMainBusPageBits}, // High WRAM
+    };
+    static constexpr ExecutablePageRange kExecutableLowWRAMPageRange = kExecutableMainBusPageRanges[0];
+    static constexpr ExecutablePageRange kExecutableSCSPWRAMPageRange = kExecutableMainBusPageRanges[1];
+    static constexpr ExecutablePageRange kExecutableVDP1PageRange = kExecutableMainBusPageRanges[2];
+    static constexpr ExecutablePageRange kExecutableVDP2PageRange = kExecutableMainBusPageRanges[3];
+    static constexpr ExecutablePageRange kExecutableHighWRAMPageRange = kExecutableMainBusPageRanges[4];
+
+} // namespace
+
 Saturn::Saturn()
     : masterSH2(m_scheduler, mainBus, true, m_systemFeatures)
     , slaveSH2(m_scheduler, mainBus, false, m_systemFeatures)
@@ -762,24 +789,6 @@ bool Saturn::IsExecutableMainBusRange(uint32 address, uint32 size) {
         return false;
     }
 
-    static constexpr uint32 kMainBusAddressMask = 0x07FF'FFFF;
-    static constexpr uint32 kMainBusPageBits = 12;
-
-    struct ExecutablePageRange {
-        uint32 start;
-        uint32 end;
-    };
-
-    // Main-bus executable ranges reduced to 4KB pages.
-    // Block-cache invalidation is page-granular, so page overlap is sufficient and cheaper than full address overlap checks.
-    static constexpr ExecutablePageRange kExecutableRanges[] = {
-        {0x020'0000 >> kMainBusPageBits, 0x02F'FFFF >> kMainBusPageBits}, // Low WRAM
-        {0x5A0'0000 >> kMainBusPageBits, 0x5A7'FFFF >> kMainBusPageBits}, // SCSP WRAM
-        {0x5C0'0000 >> kMainBusPageBits, 0x5CF'FFFF >> kMainBusPageBits}, // VDP1 VRAM + framebuffer RAM
-        {0x5E0'0000 >> kMainBusPageBits, 0x5F7'FFFF >> kMainBusPageBits}, // VDP2 VRAM + CRAM
-        {0x600'0000 >> kMainBusPageBits, 0x7FF'FFFF >> kMainBusPageBits}, // High WRAM
-    };
-
     address &= kMainBusAddressMask;
 
     const uint64 startAddress = address;
@@ -787,13 +796,11 @@ bool Saturn::IsExecutableMainBusRange(uint32 address, uint32 size) {
     const uint32 startPage = static_cast<uint32>(startAddress >> kMainBusPageBits);
     const uint32 endPage = static_cast<uint32>(endAddress >> kMainBusPageBits);
 
-    for (const ExecutablePageRange &range : kExecutableRanges) {
-        if (startPage <= range.end && endPage >= range.start) {
-            return true;
-        }
-    }
-
-    return false;
+    return (startPage <= kExecutableLowWRAMPageRange.end && endPage >= kExecutableLowWRAMPageRange.start) ||
+           (startPage <= kExecutableSCSPWRAMPageRange.end && endPage >= kExecutableSCSPWRAMPageRange.start) ||
+           (startPage <= kExecutableVDP1PageRange.end && endPage >= kExecutableVDP1PageRange.start) ||
+           (startPage <= kExecutableVDP2PageRange.end && endPage >= kExecutableVDP2PageRange.start) ||
+           (startPage <= kExecutableHighWRAMPageRange.end && endPage >= kExecutableHighWRAMPageRange.start);
 }
 
 void Saturn::MainBusWriteObserver(uint32 address, uint32 size, bool poke, void *ctx) {
