@@ -373,4 +373,63 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 page-LUT lookup keeps invalidatio
     CHECK(counters.peekRead16 > peekReadsBeforeSamePageInvalidation);
 }
 
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 block cache pool recycle keeps rebuild and reuse behavior",
+                             "[sh2][block-cache][lookup][recycle]") {
+    ResetState();
+
+    constexpr uint32 entryA = kProgramStart;
+    constexpr uint32 entryB = kProgramStart + 0x40;
+    constexpr uint32 instructionCount = ((entryB - kProgramStart) / 2u) + 64u;
+    SetInstructionSpan(kProgramStart, instrNOP, instructionCount);
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    const uint32 peekReadsAfterInitialBuild = counters.peekRead16;
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 == peekReadsAfterInitialBuild);
+
+    sh2.PurgeBlockCache();
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 > peekReadsAfterInitialBuild);
+    const uint32 peekReadsAfterRebuild = counters.peekRead16;
+
+    probe.PC() = entryA;
+    RunStep<false, false, true>();
+    probe.PC() = entryB;
+    RunStep<false, false, true>();
+    CHECK(counters.peekRead16 == peekReadsAfterRebuild);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 repeated clear and rebuild stays deterministic",
+                             "[sh2][block-cache][lookup][recycle]") {
+    ResetState();
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+
+    for (size_t i = 0; i < 4; ++i) {
+        probe.PC() = kProgramStart;
+
+        const uint32 peekReadsBeforeBuild = counters.peekRead16;
+        RunStep<false, false, true>();
+        CHECK(probe.PC() == kProgramStart + 2);
+        CHECK(counters.peekRead16 > peekReadsBeforeBuild);
+
+        const uint32 peekReadsAfterBuild = counters.peekRead16;
+        RunStep<false, false, true>();
+        CHECK(probe.PC() == kProgramStart + 4);
+        CHECK(counters.peekRead16 == peekReadsAfterBuild);
+
+        sh2.PurgeBlockCache();
+    }
+}
+
 } // namespace sh2_block_cache

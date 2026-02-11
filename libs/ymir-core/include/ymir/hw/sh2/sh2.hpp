@@ -913,6 +913,10 @@ private:
     static constexpr size_t kCachedBlockPageCount =
         (static_cast<size_t>(kCachedBlockAddressMask) + 1ull) / kCachedBlockPageSize;
     static constexpr size_t kInvalidCachedBlockIndex = static_cast<size_t>(-1);
+    static constexpr uint32 kLookupBucketsPerChunk = 256;
+    static constexpr uint32 kLookupBucketsPerChunkShift = 8;
+    static constexpr uint32 kLookupBucketsPerChunkMask = kLookupBucketsPerChunk - 1u;
+    static constexpr uint32 kInvalidLookupBucketIndex = 0xFFFF'FFFF;
 
     struct CachedBlock {
         uint32 startPC = 0;
@@ -938,7 +942,12 @@ private:
 
     // Bucket index format: (busPage << 1) | delaySlotBit
     std::array<sint32, kCachedBlockPageCount * 2> m_cachedBlockBucketHeads{};
-    std::vector<CachedBlockLookupBucket> m_cachedBlockLookupBuckets;
+    // Lookup buckets are allocated from VM-backed chunks and recycled across PurgeBlockCache/ClearCachedBlocks calls.
+    std::vector<util::VirtualMemory> m_cachedBlockLookupBucketChunksMem;
+    std::vector<CachedBlockLookupBucket *> m_cachedBlockLookupBucketChunks;
+    std::vector<uint32> m_cachedBlockLookupBucketFreeList;
+    std::vector<uint32> m_cachedBlockLookupBucketActiveList;
+    uint32 m_cachedBlockLookupBucketCount = 0;
     std::vector<CachedBlock> m_cachedBlocks;
     CachedBlockCursor m_cachedBlockCursor;
     std::array<uint32, kCachedBlockPageCount> m_cachedBlockPageGenerations{};
@@ -947,6 +956,9 @@ private:
     FORCE_INLINE uint32 GetCachedBlockPage(uint32 pc) const;
     FORCE_INLINE uint32 GetCachedBlockBucket(uint32 pc, bool delaySlot) const;
     FORCE_INLINE uint32 GetCachedBlockOffset(uint32 pc) const;
+    FORCE_INLINE CachedBlockLookupBucket *GetCachedBlockLookupBucket(uint32 lookupBucketIndex);
+    FORCE_INLINE const CachedBlockLookupBucket *GetCachedBlockLookupBucket(uint32 lookupBucketIndex) const;
+    uint32 AllocateCachedBlockLookupBucket();
     size_t FindCachedBlockIndex(uint32 pc, bool delaySlot) const;
     size_t FindOrCreateCachedBlock(uint32 pc, bool delaySlot);
 
