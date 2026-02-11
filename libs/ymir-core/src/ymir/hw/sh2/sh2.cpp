@@ -109,10 +109,6 @@ namespace config {
     inline constexpr uint32 sysExecDumpAddress = 0x186C;
 } // namespace config
 
-FORCE_INLINE static uint64 MakeCachedBlockKey(uint32 pc, bool delaySlot) {
-    return (static_cast<uint64>(pc) << 1u) | static_cast<uint64>(delaySlot ? 1u : 0u);
-}
-
 FORCE_INLINE static bool IsCachedBlockBarrier(OpcodeType opcode) {
     switch (opcode) {
     case OpcodeType::SLEEP:
@@ -495,8 +491,75 @@ void SH2::InvalidateBlockCacheRange(uint32 address, uint32 size) {
     invalidateCursorIfPageOverlaps(startPage, endPage);
 }
 
+FORCE_INLINE uint32 SH2::GetCachedBlockPage(uint32 pc) const {
+    return (pc & kCachedBlockAddressMask) >> kCachedBlockPageBits;
+}
+
+FORCE_INLINE uint32 SH2::GetCachedBlockBucket(uint32 pc, bool delaySlot) const {
+    const uint32 page = GetCachedBlockPage(pc);
+    return (page << 1u) | static_cast<uint32>(delaySlot ? 1u : 0u);
+}
+
+FORCE_INLINE uint32 SH2::GetCachedBlockOffset(uint32 pc) const {
+    return (pc & kCachedBlockPageOffsetMask) >> 1u;
+}
+
+size_t SH2::FindCachedBlockIndex(uint32 pc, bool delaySlot) const {
+    const uint32 bucket = GetCachedBlockBucket(pc, delaySlot);
+    const sint32 lookupBucketIndex = m_cachedBlockBucketHeads[bucket];
+    if (lookupBucketIndex < 0) {
+        return kInvalidCachedBlockIndex;
+    }
+
+    const CachedBlockLookupBucket &lookupBucket = m_cachedBlockLookupBuckets[static_cast<size_t>(lookupBucketIndex)];
+    sint32 blockIndex = lookupBucket.offsetHeads[GetCachedBlockOffset(pc)];
+    while (blockIndex >= 0) {
+        const CachedBlock &block = m_cachedBlocks[static_cast<size_t>(blockIndex)];
+        if (block.startPC == pc && block.startDelaySlot == delaySlot) {
+            return static_cast<size_t>(blockIndex);
+        }
+        blockIndex = block.lookupOffsetNext;
+    }
+
+    return kInvalidCachedBlockIndex;
+}
+
+size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
+    const size_t existingBlockIndex = FindCachedBlockIndex(pc, delaySlot);
+    if (existingBlockIndex != kInvalidCachedBlockIndex) {
+        return existingBlockIndex;
+    }
+
+    const uint32 bucket = GetCachedBlockBucket(pc, delaySlot);
+    sint32 lookupBucketIndex = m_cachedBlockBucketHeads[bucket];
+    if (lookupBucketIndex < 0) {
+        CachedBlockLookupBucket lookupBucket{};
+        lookupBucket.offsetHeads.fill(-1);
+        const size_t newLookupBucketIndex = m_cachedBlockLookupBuckets.size();
+        m_cachedBlockLookupBuckets.emplace_back(std::move(lookupBucket));
+        lookupBucketIndex = static_cast<sint32>(newLookupBucketIndex);
+        m_cachedBlockBucketHeads[bucket] = lookupBucketIndex;
+    }
+
+    CachedBlockLookupBucket &lookupBucket = m_cachedBlockLookupBuckets[static_cast<size_t>(lookupBucketIndex)];
+    const uint32 offset = GetCachedBlockOffset(pc);
+
+    CachedBlock block{};
+    block.startPC = pc;
+    block.startDelaySlot = delaySlot;
+    block.startBusPage = GetCachedBlockPage(pc);
+    block.lookupOffsetNext = lookupBucket.offsetHeads[offset];
+
+    const size_t blockIndex = m_cachedBlocks.size();
+    m_cachedBlocks.emplace_back(std::move(block));
+    lookupBucket.offsetHeads[offset] = static_cast<sint32>(blockIndex);
+
+    return blockIndex;
+}
+
 void SH2::ClearCachedBlocks() {
-    m_cachedBlocksByPC.clear();
+    m_cachedBlockBucketHeads.fill(-1);
+    m_cachedBlockLookupBuckets.clear();
     m_cachedBlocks.clear();
     m_cachedBlockCursor = {};
     m_cachedBlockPageGenerations.fill(0);
@@ -2106,56 +2169,51 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
 
         if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC ||
             m_cachedBlockCursor.expectedDelaySlot != currentDelaySlot) {
-            const uint64 blockKey = MakeCachedBlockKey(PC, currentDelaySlot);
-            auto it = m_cachedBlocksByPC.find(blockKey);
-            if (it == m_cachedBlocksByPC.end()) {
-                CachedBlock block{};
-                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-
-                const size_t blockIndex = m_cachedBlocks.size();
-                m_cachedBlocks.emplace_back(std::move(block));
-                it = m_cachedBlocksByPC.emplace(blockKey, blockIndex).first;
-            }
-
-            m_cachedBlockCursor.blockIndex = it->second;
+            m_cachedBlockCursor.blockIndex = FindOrCreateCachedBlock(PC, currentDelaySlot);
             m_cachedBlockCursor.instructionIndex = 0;
             m_cachedBlockCursor.expectedPC = PC;
             m_cachedBlockCursor.expectedDelaySlot = currentDelaySlot;
             m_cachedBlockCursor.valid = true;
         }
 
-        CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
-        if (m_cachedBlockCursor.instructionIndex == 0 &&
-            (block.instructionCount == 0 || block.startPC != PC || block.startDelaySlot != currentDelaySlot ||
-             block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage])) {
-            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-            m_cachedBlockCursor.instructionIndex = 0;
-        }
-        if (m_cachedBlockCursor.instructionIndex >= block.instructionCount) {
-            BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-            m_cachedBlockCursor.instructionIndex = 0;
-        }
+        if (m_cachedBlockCursor.blockIndex >= m_cachedBlocks.size()) [[unlikely]] {
+            m_cachedBlockCursor.valid = false;
+            instr = FetchInstruction<enableSH2Cache>(PC);
+        } else {
+            CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
+            if (m_cachedBlockCursor.instructionIndex == 0 &&
+                (block.instructionCount == 0 || block.startPC != PC || block.startDelaySlot != currentDelaySlot ||
+                 block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage])) {
+                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+                m_cachedBlockCursor.instructionIndex = 0;
+            }
+            if (m_cachedBlockCursor.instructionIndex >= block.instructionCount) {
+                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
+                m_cachedBlockCursor.instructionIndex = 0;
+            }
 
-        // Phase 4.2 fast path: execute cached opcodes directly; coherency is maintained by bus-driven invalidation.
-        instr = block.instructions[m_cachedBlockCursor.instructionIndex];
-        if constexpr (enableSH2Cache) {
-            // Keep SH-2 cache emulation side effects on each instruction fetch while reusing the cached decode path.
-            const uint16 fetchedInstr = FetchInstruction<true>(PC);
-            if (instr != fetchedInstr) [[unlikely]] {
-                instr = fetchedInstr;
+            // Phase 4.2 fast path: execute cached opcodes directly; coherency is maintained by bus-driven invalidation.
+            instr = block.instructions[m_cachedBlockCursor.instructionIndex];
+            if constexpr (enableSH2Cache) {
+                // Keep SH-2 cache emulation side effects on each instruction fetch while reusing the cached decode
+                // path.
+                const uint16 fetchedInstr = FetchInstruction<true>(PC);
+                if (instr != fetchedInstr) [[unlikely]] {
+                    instr = fetchedInstr;
+                    m_cachedBlockCursor.valid = false;
+                }
+            }
+
+            // Keep Phase 2/3 requirement: execute exactly one instruction per InterpretNext() invocation.
+            const size_t nextInstructionIndex = m_cachedBlockCursor.instructionIndex + 1;
+            if (nextInstructionIndex < block.instructionCount) {
+                m_cachedBlockCursor.instructionIndex = nextInstructionIndex;
+                m_cachedBlockCursor.expectedPC = PC + 2;
+                // The builder ends blocks before control-flow opcodes that can arm delay slots.
+                m_cachedBlockCursor.expectedDelaySlot = false;
+            } else {
                 m_cachedBlockCursor.valid = false;
             }
-        }
-
-        // Keep Phase 2/3 requirement: execute exactly one instruction per InterpretNext() invocation.
-        const size_t nextInstructionIndex = m_cachedBlockCursor.instructionIndex + 1;
-        if (nextInstructionIndex < block.instructionCount) {
-            m_cachedBlockCursor.instructionIndex = nextInstructionIndex;
-            m_cachedBlockCursor.expectedPC = PC + 2;
-            // The builder ends blocks before control-flow opcodes that can arm delay slots.
-            m_cachedBlockCursor.expectedDelaySlot = false;
-        } else {
-            m_cachedBlockCursor.valid = false;
         }
     } else {
         instr = FetchInstruction<enableSH2Cache>(PC);
