@@ -902,7 +902,7 @@ private:
     // -------------------------------------------------------------------------
     // Cached interpreter blocks
 
-    // Phase 3 keeps conservative blocks to maximize correctness and ease debugging.
+    // Phase 6.5 keeps conservative execution semantics while extending block length for better reuse.
     static constexpr size_t kCachedBlockMaxInstructions = 32;
     static constexpr uint32 kCachedBlockPageSize = 0x1000;
     static constexpr uint32 kCachedBlockPageMask = ~(kCachedBlockPageSize - 1u);
@@ -958,9 +958,8 @@ private:
     FORCE_INLINE uint32 GetCachedBlockOffset(uint32 pc) const;
     FORCE_INLINE CachedBlockLookupBucket *GetCachedBlockLookupBucket(uint32 lookupBucketIndex);
     FORCE_INLINE const CachedBlockLookupBucket *GetCachedBlockLookupBucket(uint32 lookupBucketIndex) const;
-    uint32 AllocateCachedBlockLookupBucket();
-    size_t FindCachedBlockIndex(uint32 pc, bool delaySlot) const;
-    size_t FindOrCreateCachedBlock(uint32 pc, bool delaySlot);
+    FORCE_INLINE uint32 AllocateCachedBlockLookupBucket();
+    FORCE_INLINE size_t FindOrCreateCachedBlock(uint32 pc, bool delaySlot);
 
     template <bool enableSH2Cache>
     void BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySlot);

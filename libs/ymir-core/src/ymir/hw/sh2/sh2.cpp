@@ -516,7 +516,7 @@ FORCE_INLINE const SH2::CachedBlockLookupBucket *SH2::GetCachedBlockLookupBucket
     return &m_cachedBlockLookupBucketChunks[chunkIndex][chunkOffset];
 }
 
-uint32 SH2::AllocateCachedBlockLookupBucket() {
+FORCE_INLINE uint32 SH2::AllocateCachedBlockLookupBucket() {
     if (!m_cachedBlockLookupBucketFreeList.empty()) {
         const uint32 lookupBucketIndex = m_cachedBlockLookupBucketFreeList.back();
         m_cachedBlockLookupBucketFreeList.pop_back();
@@ -541,59 +541,49 @@ uint32 SH2::AllocateCachedBlockLookupBucket() {
     return lookupBucketIndex;
 }
 
-size_t SH2::FindCachedBlockIndex(uint32 pc, bool delaySlot) const {
+FORCE_INLINE size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
+    // Cached lookup hot path:
+    // - compute bucket/offset once
+    // - walk only the relevant offset chain in that page+delay bucket
     const uint32 bucket = GetCachedBlockBucket(pc, delaySlot);
-    const sint32 lookupBucketIndex = m_cachedBlockBucketHeads[bucket];
-    if (lookupBucketIndex < 0) {
-        return kInvalidCachedBlockIndex;
-    }
-
-    const CachedBlockLookupBucket &lookupBucket = *GetCachedBlockLookupBucket(static_cast<uint32>(lookupBucketIndex));
-    sint32 blockIndex = lookupBucket.offsetHeads[GetCachedBlockOffset(pc)];
-    while (blockIndex >= 0) {
-        const CachedBlock &block = m_cachedBlocks[static_cast<size_t>(blockIndex)];
-        if (block.startPC == pc && block.startDelaySlot == delaySlot) {
-            return static_cast<size_t>(blockIndex);
-        }
-        blockIndex = block.lookupOffsetNext;
-    }
-
-    return kInvalidCachedBlockIndex;
-}
-
-size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
-    const size_t existingBlockIndex = FindCachedBlockIndex(pc, delaySlot);
-    if (existingBlockIndex != kInvalidCachedBlockIndex) {
-        return existingBlockIndex;
-    }
-
-    const uint32 bucket = GetCachedBlockBucket(pc, delaySlot);
+    const uint32 offset = GetCachedBlockOffset(pc);
     sint32 lookupBucketIndex = m_cachedBlockBucketHeads[bucket];
-    if (lookupBucketIndex < 0) {
+
+    CachedBlockLookupBucket *lookupBucket = nullptr;
+    if (lookupBucketIndex >= 0) {
+        lookupBucket = GetCachedBlockLookupBucket(static_cast<uint32>(lookupBucketIndex));
+
+        sint32 blockIndex = lookupBucket->offsetHeads[offset];
+        while (blockIndex >= 0) {
+            const CachedBlock &block = m_cachedBlocks[static_cast<size_t>(blockIndex)];
+            if (block.startPC == pc && block.startDelaySlot == delaySlot) {
+                return static_cast<size_t>(blockIndex);
+            }
+            blockIndex = block.lookupOffsetNext;
+        }
+    } else {
         const uint32 newLookupBucketIndex = AllocateCachedBlockLookupBucket();
         if (newLookupBucketIndex == kInvalidLookupBucketIndex) {
+            // Preserve forward progress in low-memory situations by letting caller fall back to uncached fetch.
             return kInvalidCachedBlockIndex;
         }
 
-        CachedBlockLookupBucket *lookupBucket = GetCachedBlockLookupBucket(newLookupBucketIndex);
+        lookupBucket = GetCachedBlockLookupBucket(newLookupBucketIndex);
         lookupBucket->offsetHeads.fill(-1);
         lookupBucketIndex = static_cast<sint32>(newLookupBucketIndex);
         m_cachedBlockBucketHeads[bucket] = lookupBucketIndex;
         m_cachedBlockLookupBucketActiveList.emplace_back(newLookupBucketIndex);
     }
 
-    CachedBlockLookupBucket &lookupBucket = *GetCachedBlockLookupBucket(static_cast<uint32>(lookupBucketIndex));
-    const uint32 offset = GetCachedBlockOffset(pc);
-
     CachedBlock block{};
     block.startPC = pc;
     block.startDelaySlot = delaySlot;
     block.startBusPage = GetCachedBlockPage(pc);
-    block.lookupOffsetNext = lookupBucket.offsetHeads[offset];
+    block.lookupOffsetNext = lookupBucket->offsetHeads[offset];
 
     const size_t blockIndex = m_cachedBlocks.size();
     m_cachedBlocks.emplace_back(std::move(block));
-    lookupBucket.offsetHeads[offset] = static_cast<sint32>(blockIndex);
+    lookupBucket->offsetHeads[offset] = static_cast<sint32>(blockIndex);
 
     return blockIndex;
 }
@@ -2213,7 +2203,7 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     uint16 instr = 0;
     if constexpr (enableBlockCache && !debug) {
         const bool currentDelaySlot = m_delaySlot;
-        bool fetchedFromFallbackPath = false;
+        bool useCachedBlockSource = true;
 
         if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC ||
             m_cachedBlockCursor.expectedDelaySlot != currentDelaySlot) {
@@ -2221,8 +2211,7 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
             if (blockIndex == kInvalidCachedBlockIndex) {
                 // Graceful fallback if lookup pool growth fails: continue with uncached fetch path.
                 m_cachedBlockCursor.valid = false;
-                instr = FetchInstruction<enableSH2Cache>(PC);
-                fetchedFromFallbackPath = true;
+                useCachedBlockSource = false;
             } else {
                 m_cachedBlockCursor.blockIndex = blockIndex;
                 m_cachedBlockCursor.instructionIndex = 0;
@@ -2232,18 +2221,19 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
             }
         }
 
-        if (!fetchedFromFallbackPath && m_cachedBlockCursor.blockIndex >= m_cachedBlocks.size()) [[unlikely]] {
+        if (useCachedBlockSource && m_cachedBlockCursor.blockIndex >= m_cachedBlocks.size()) [[unlikely]] {
             m_cachedBlockCursor.valid = false;
-            instr = FetchInstruction<enableSH2Cache>(PC);
-        } else if (!fetchedFromFallbackPath) {
+            useCachedBlockSource = false;
+        }
+
+        if (useCachedBlockSource) {
             CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
-            if (m_cachedBlockCursor.instructionIndex == 0 &&
+            const bool needsEntryRebuild =
+                m_cachedBlockCursor.instructionIndex == 0 &&
                 (block.instructionCount == 0 || block.startPC != PC || block.startDelaySlot != currentDelaySlot ||
-                 block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage])) {
-                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-                m_cachedBlockCursor.instructionIndex = 0;
-            }
-            if (m_cachedBlockCursor.instructionIndex >= block.instructionCount) {
+                 block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage]);
+            const bool needsRangeRebuild = m_cachedBlockCursor.instructionIndex >= block.instructionCount;
+            if (needsEntryRebuild || needsRangeRebuild) {
                 BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
                 m_cachedBlockCursor.instructionIndex = 0;
             }
@@ -2270,6 +2260,8 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
             } else {
                 m_cachedBlockCursor.valid = false;
             }
+        } else {
+            instr = FetchInstruction<enableSH2Cache>(PC);
         }
     } else {
         instr = FetchInstruction<enableSH2Cache>(PC);
