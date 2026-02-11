@@ -58,9 +58,26 @@ void VirtualMemory::Map(size_t size) {
 #ifdef WIN32
     m_internal->hSection = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, bit::extract<32, 63>(size),
                                               bit::extract<0, 31>(size), nullptr);
+    if (m_internal->hSection == nullptr) {
+        m_mem = nullptr;
+        m_size = 0;
+        return;
+    }
+
     m_mem = MapViewOfFile(m_internal->hSection, FILE_MAP_ALL_ACCESS, 0, 0, size);
+    if (m_mem == nullptr) {
+        CloseHandle(m_internal->hSection);
+        m_internal->hSection = INVALID_HANDLE_VALUE;
+        m_size = 0;
+        return;
+    }
 #else // POSIX
     m_mem = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    if (m_mem == MAP_FAILED) {
+        m_mem = nullptr;
+        m_size = 0;
+        return;
+    }
 #endif
     m_size = size;
 }
