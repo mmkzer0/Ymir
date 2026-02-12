@@ -335,13 +335,15 @@ void SH2::DumpCacheAddressTag(std::ostream &out) const {
 template <bool debug, bool enableSH2Cache, bool enableBlockCache>
 FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
     m_cyclesExecuted = spilloverCycles;
+    uint64 &cyclesExecuted = m_cyclesExecuted;
+    [[maybe_unused]] const DecodeTable &decodeTable = DecodeTable::s_instance;
     AdvanceWDT<false>();
     AdvanceFRT<false>();
 
     if constexpr (debug) {
         if (m_debugSuspend) {
-            m_cyclesExecuted = cycles;
-            return m_cyclesExecuted;
+            cyclesExecuted = cycles;
+            return cyclesExecuted;
         }
     }
     // Skip interpreting instructions if CPU is in sleep or standby mode.
@@ -355,11 +357,11 @@ FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
         }
     }
 
-    while (m_cyclesExecuted < cycles) {
+    while (cyclesExecuted < cycles) {
         // [[maybe_unused]] const uint32 prevPC = PC; // debug aid
 
         // TODO: choose between interpreter (cached or uncached) and JIT recompiler
-        m_cyclesExecuted += InterpretNext<debug, enableSH2Cache, enableBlockCache>();
+        cyclesExecuted += InterpretNext<debug, enableSH2Cache, enableBlockCache>();
 
         // If PC is not in any of these places, something went horribly wrong
 
@@ -380,7 +382,7 @@ FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
                 }
 
                 const uint16 instr = MemRead<uint16, true, true, enableSH2Cache>(PC);
-                const auto &mem = DecodeTable::s_instance.mem[instr];
+                const auto &mem = decodeTable.mem[instr];
                 if (CheckWatchpoints(mem)) {
                     break;
                 }
@@ -395,8 +397,8 @@ FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
             }
         }
     }
-    AdvanceDMA<debug, enableSH2Cache>(m_cyclesExecuted - spilloverCycles);
-    return m_cyclesExecuted;
+    AdvanceDMA<debug, enableSH2Cache>(cyclesExecuted - spilloverCycles);
+    return cyclesExecuted;
 }
 
 template uint64 SH2::Advance<false, false, false>(uint64, uint64);
@@ -2208,85 +2210,89 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     }
 
     // TODO: emulate or approximate fetch - decode - execute - memory access - writeback pipeline
+    const DecodeTable &decodeTable = DecodeTable::s_instance;
+    const uint32 currentPC = PC;
+    const bool currentDelaySlot = m_delaySlot;
 
     uint16 instr = 0;
     OpcodeType opcode = OpcodeType::Illegal;
     bool hasCachedOpcode = false;
     if constexpr (enableBlockCache && !debug) {
-        const bool currentDelaySlot = m_delaySlot;
+        CachedBlockCursor &cursor = m_cachedBlockCursor;
+        std::vector<CachedBlock> &cachedBlocks = m_cachedBlocks;
+        const auto &pageGenerations = m_cachedBlockPageGenerations;
         bool useCachedBlockSource = true;
 
-        if (!m_cachedBlockCursor.valid || m_cachedBlockCursor.expectedPC != PC ||
-            m_cachedBlockCursor.expectedDelaySlot != currentDelaySlot) {
-            const size_t blockIndex = FindOrCreateCachedBlock(PC, currentDelaySlot);
+        if (!cursor.valid || cursor.expectedPC != currentPC || cursor.expectedDelaySlot != currentDelaySlot) {
+            const size_t blockIndex = FindOrCreateCachedBlock(currentPC, currentDelaySlot);
             if (blockIndex == kInvalidCachedBlockIndex) [[unlikely]] {
                 // Graceful fallback if lookup pool growth fails: continue with uncached fetch path.
-                m_cachedBlockCursor.valid = false;
+                cursor.valid = false;
                 useCachedBlockSource = false;
             } else {
-                m_cachedBlockCursor.blockIndex = blockIndex;
-                m_cachedBlockCursor.instructionIndex = 0;
-                m_cachedBlockCursor.expectedPC = PC;
-                m_cachedBlockCursor.expectedDelaySlot = currentDelaySlot;
-                m_cachedBlockCursor.valid = true;
+                cursor.blockIndex = blockIndex;
+                cursor.instructionIndex = 0;
+                cursor.expectedPC = currentPC;
+                cursor.expectedDelaySlot = currentDelaySlot;
+                cursor.valid = true;
             }
         }
 
-        if (useCachedBlockSource && m_cachedBlockCursor.blockIndex >= m_cachedBlocks.size()) [[unlikely]] {
-            m_cachedBlockCursor.valid = false;
+        if (useCachedBlockSource && cursor.blockIndex >= cachedBlocks.size()) [[unlikely]] {
+            cursor.valid = false;
             useCachedBlockSource = false;
         }
 
         if (useCachedBlockSource) {
-            CachedBlock &block = m_cachedBlocks[m_cachedBlockCursor.blockIndex];
+            CachedBlock &block = cachedBlocks[cursor.blockIndex];
             const bool needsEntryRebuild =
-                m_cachedBlockCursor.instructionIndex == 0 &&
-                (block.instructionCount == 0 || block.startPC != PC || block.startDelaySlot != currentDelaySlot ||
-                 block.busPageGeneration != m_cachedBlockPageGenerations[block.startBusPage]);
-            const bool needsRangeRebuild = m_cachedBlockCursor.instructionIndex >= block.instructionCount;
+                cursor.instructionIndex == 0 &&
+                (block.instructionCount == 0 || block.startPC != currentPC || block.startDelaySlot != currentDelaySlot ||
+                 block.busPageGeneration != pageGenerations[block.startBusPage]);
+            const bool needsRangeRebuild = cursor.instructionIndex >= block.instructionCount;
             if (needsEntryRebuild || needsRangeRebuild) {
-                BuildCachedBlock<enableSH2Cache>(block, PC, currentDelaySlot);
-                m_cachedBlockCursor.instructionIndex = 0;
+                BuildCachedBlock<enableSH2Cache>(block, currentPC, currentDelaySlot);
+                cursor.instructionIndex = 0;
             }
 
             // Phase 4.2 fast path: execute cached opcodes directly; coherency is maintained by bus-driven invalidation.
-            instr = block.instructions[m_cachedBlockCursor.instructionIndex];
-            opcode = block.decodedOpcodes[m_cachedBlockCursor.instructionIndex];
+            instr = block.instructions[cursor.instructionIndex];
+            opcode = block.decodedOpcodes[cursor.instructionIndex];
             hasCachedOpcode = true;
             if constexpr (enableSH2Cache) {
                 // Keep SH-2 cache emulation side effects on each instruction fetch while reusing the cached decode
                 // path.
-                const uint16 fetchedInstr = FetchInstruction<true>(PC);
+                const uint16 fetchedInstr = FetchInstruction<true>(currentPC);
                 if (instr != fetchedInstr) [[unlikely]] {
                     instr = fetchedInstr;
-                    opcode = DecodeTable::s_instance.opcodes[currentDelaySlot][instr];
-                    m_cachedBlockCursor.valid = false;
+                    opcode = decodeTable.opcodes[currentDelaySlot][instr];
+                    cursor.valid = false;
                 }
             }
 
             // Keep Phase 2/3 requirement: execute exactly one instruction per InterpretNext() invocation.
-            const size_t nextInstructionIndex = m_cachedBlockCursor.instructionIndex + 1;
+            const size_t nextInstructionIndex = cursor.instructionIndex + 1;
             if (nextInstructionIndex < block.instructionCount) {
-                m_cachedBlockCursor.instructionIndex = nextInstructionIndex;
-                m_cachedBlockCursor.expectedPC = PC + 2;
+                cursor.instructionIndex = nextInstructionIndex;
+                cursor.expectedPC = currentPC + 2;
                 // The builder ends blocks before control-flow opcodes that can arm delay slots.
-                m_cachedBlockCursor.expectedDelaySlot = false;
+                cursor.expectedDelaySlot = false;
             } else {
-                m_cachedBlockCursor.valid = false;
+                cursor.valid = false;
             }
         } else {
-            instr = FetchInstruction<enableSH2Cache>(PC);
+            instr = FetchInstruction<enableSH2Cache>(currentPC);
         }
     } else {
-        instr = FetchInstruction<enableSH2Cache>(PC);
+        instr = FetchInstruction<enableSH2Cache>(currentPC);
     }
 
-    TraceExecuteInstruction<debug>(m_tracer, PC, instr, m_delaySlot);
+    TraceExecuteInstruction<debug>(m_tracer, currentPC, instr, currentDelaySlot);
 
     if (!hasCachedOpcode) {
-        opcode = DecodeTable::s_instance.opcodes[m_delaySlot][instr];
+        opcode = decodeTable.opcodes[currentDelaySlot][instr];
     }
-    const DecodedArgs &args = DecodeTable::s_instance.args[instr];
+    const DecodedArgs &args = decodeTable.args[instr];
 
     // TODO: check program execution
     switch (opcode) {
