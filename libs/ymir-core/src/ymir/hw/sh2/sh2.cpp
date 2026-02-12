@@ -2177,6 +2177,65 @@ void SH2::BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySl
     }
 }
 
+static constexpr size_t kSH2OpcodeCount = static_cast<size_t>(OpcodeType::IllegalSlot) + 1u;
+
+template <bool debug, bool enableSH2Cache>
+FORCE_INLINE uint64 SH2::DispatchOpcode(OpcodeType opcode, const DecodedArgs &args) {
+    constexpr size_t kDispatchMapEntryCount = []() constexpr {
+        size_t count = 0;
+#define SH2_DISPATCH_OP(opcodeName, ...) ++count;
+#include "sh2_dispatch_map.inc"
+#undef SH2_DISPATCH_OP
+        return count;
+    }();
+    static_assert(kDispatchMapEntryCount == kSH2OpcodeCount, "SH-2 dispatch map must cover every OpcodeType entry.");
+
+    SH2 &cpu = *this;
+    const size_t opcodeIndex = static_cast<size_t>(opcode);
+    YMIR_DEV_ASSERT(opcodeIndex < kSH2OpcodeCount);
+
+#if Ymir_SH2_DISPATCH_BACKEND_FUNCPTR
+    using DispatchFn = uint64 (*)(SH2 &, const DecodedArgs &);
+    static const auto dispatchTable = []() {
+        std::array<DispatchFn, kSH2OpcodeCount> table{};
+    #define SH2_DISPATCH_OP(opcodeName, ...)                 \
+        table[static_cast<size_t>(OpcodeType::opcodeName)] = \
+            +[](SH2 &cpu, const DecodedArgs &args) -> uint64 { return __VA_ARGS__; };
+    #include "sh2_dispatch_map.inc"
+    #undef SH2_DISPATCH_OP
+        return table;
+    }();
+
+    #if Ymir_DEV_ASSERTIONS
+    static const bool tableIsComplete = []() {
+        for (const DispatchFn fn : dispatchTable) {
+            if (fn == nullptr) {
+                return false;
+            }
+        }
+        return true;
+    }();
+    YMIR_DEV_ASSERT(tableIsComplete);
+    #endif
+
+    const DispatchFn fn = dispatchTable[opcodeIndex];
+    YMIR_DEV_ASSERT(fn != nullptr);
+    return fn(cpu, args);
+#elif Ymir_SH2_DISPATCH_BACKEND_SWITCH
+    switch (opcode) {
+    #define SH2_DISPATCH_OP(opcodeName, ...) \
+    case OpcodeType::opcodeName: return __VA_ARGS__;
+    #include "sh2_dispatch_map.inc"
+    #undef SH2_DISPATCH_OP
+    }
+
+    util::unreachable();
+    return 0;
+#else
+    #error "Unsupported SH-2 dispatch backend configuration."
+#endif
+}
+
 // -----------------------------------------------------------------------------
 // Instruction interpreters
 
@@ -2246,9 +2305,9 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
         if (useCachedBlockSource) {
             CachedBlock &block = cachedBlocks[cursor.blockIndex];
             const bool needsEntryRebuild =
-                cursor.instructionIndex == 0 &&
-                (block.instructionCount == 0 || block.startPC != currentPC || block.startDelaySlot != currentDelaySlot ||
-                 block.busPageGeneration != pageGenerations[block.startBusPage]);
+                cursor.instructionIndex == 0 && (block.instructionCount == 0 || block.startPC != currentPC ||
+                                                 block.startDelaySlot != currentDelaySlot ||
+                                                 block.busPageGeneration != pageGenerations[block.startBusPage]);
             const bool needsRangeRebuild = cursor.instructionIndex >= block.instructionCount;
             if (needsEntryRebuild || needsRangeRebuild) {
                 BuildCachedBlock<enableSH2Cache>(block, currentPC, currentDelaySlot);
@@ -2295,306 +2354,7 @@ FORCE_INLINE uint64 SH2::InterpretNext() {
     const DecodedArgs &args = decodeTable.args[instr];
 
     // TODO: check program execution
-    switch (opcode) {
-    case OpcodeType::NOP: return NOP<false>();
-
-    case OpcodeType::SLEEP: return SLEEP();
-
-    case OpcodeType::MOV_R: return MOV<false>(args);
-    case OpcodeType::MOVB_L: return MOVBL<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_L: return MOVWL<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_L: return MOVLL<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_L0: return MOVBL0<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_L0: return MOVWL0<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_L0: return MOVLL0<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_L4: return MOVBL4<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_L4: return MOVWL4<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_L4: return MOVLL4<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_LG: return MOVBLG<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_LG: return MOVWLG<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_LG: return MOVLLG<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_M: return MOVBM<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_M: return MOVWM<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_M: return MOVLM<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_P: return MOVBP<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_P: return MOVWP<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_P: return MOVLP<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_S: return MOVBS<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_S: return MOVWS<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_S: return MOVLS<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_S0: return MOVBS0<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_S0: return MOVWS0<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_S0: return MOVLS0<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_S4: return MOVBS4<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_S4: return MOVWS4<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_S4: return MOVLS4<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVB_SG: return MOVBSG<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVW_SG: return MOVWSG<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_SG: return MOVLSG<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOV_I: return MOVI<false>(args);
-    case OpcodeType::MOVW_I: return MOVWI<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVL_I: return MOVLI<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MOVA: return MOVA<false>(args);
-    case OpcodeType::MOVT: return MOVT<false>(args);
-    case OpcodeType::CLRT: return CLRT<false>();
-    case OpcodeType::SETT: return SETT<false>();
-
-    case OpcodeType::EXTUB: return EXTUB<false>(args);
-    case OpcodeType::EXTUW: return EXTUW<false>(args);
-    case OpcodeType::EXTSB: return EXTSB<false>(args);
-    case OpcodeType::EXTSW: return EXTSW<false>(args);
-    case OpcodeType::SWAPB: return SWAPB<false>(args);
-    case OpcodeType::SWAPW: return SWAPW<false>(args);
-    case OpcodeType::XTRCT: return XTRCT<false>(args);
-
-    case OpcodeType::LDC_GBR_R: return LDCGBR<false>(args);
-    case OpcodeType::LDC_SR_R: return LDCSR<false>(args);
-    case OpcodeType::LDC_VBR_R: return LDCVBR<false>(args);
-    case OpcodeType::LDS_MACH_R: return LDSMACH<false>(args);
-    case OpcodeType::LDS_MACL_R: return LDSMACL<false>(args);
-    case OpcodeType::LDS_PR_R: return LDSPR<false>(args);
-    case OpcodeType::STC_GBR_R: return STCGBR<false>(args);
-    case OpcodeType::STC_SR_R: return STCSR<false>(args);
-    case OpcodeType::STC_VBR_R: return STCVBR<false>(args);
-    case OpcodeType::STS_MACH_R: return STSMACH<false>(args);
-    case OpcodeType::STS_MACL_R: return STSMACL<false>(args);
-    case OpcodeType::STS_PR_R: return STSPR<false>(args);
-    case OpcodeType::LDC_GBR_M: return LDCMGBR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::LDC_SR_M: return LDCMSR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::LDC_VBR_M: return LDCMVBR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::LDS_MACH_M: return LDSMMACH<debug, enableSH2Cache, false>(args);
-    case OpcodeType::LDS_MACL_M: return LDSMMACL<debug, enableSH2Cache, false>(args);
-    case OpcodeType::LDS_PR_M: return LDSMPR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::STC_GBR_M: return STCMGBR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::STC_SR_M: return STCMSR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::STC_VBR_M: return STCMVBR<debug, enableSH2Cache, false>(args);
-    case OpcodeType::STS_MACH_M: return STSMMACH<debug, enableSH2Cache, false>(args);
-    case OpcodeType::STS_MACL_M: return STSMMACL<debug, enableSH2Cache, false>(args);
-    case OpcodeType::STS_PR_M: return STSMPR<debug, enableSH2Cache, false>(args);
-
-    case OpcodeType::ADD: return ADD<false>(args);
-    case OpcodeType::ADD_I: return ADDI<false>(args);
-    case OpcodeType::ADDC: return ADDC<false>(args);
-    case OpcodeType::ADDV: return ADDV<false>(args);
-    case OpcodeType::AND_R: return AND<false>(args);
-    case OpcodeType::AND_I: return ANDI<false>(args);
-    case OpcodeType::AND_M: return ANDM<debug, enableSH2Cache, false>(args);
-    case OpcodeType::NEG: return NEG<false>(args);
-    case OpcodeType::NEGC: return NEGC<false>(args);
-    case OpcodeType::NOT: return NOT<false>(args);
-    case OpcodeType::OR_R: return OR<false>(args);
-    case OpcodeType::OR_I: return ORI<false>(args);
-    case OpcodeType::OR_M: return ORM<debug, enableSH2Cache, false>(args);
-    case OpcodeType::ROTCL: return ROTCL<false>(args);
-    case OpcodeType::ROTCR: return ROTCR<false>(args);
-    case OpcodeType::ROTL: return ROTL<false>(args);
-    case OpcodeType::ROTR: return ROTR<false>(args);
-    case OpcodeType::SHAL: return SHAL<false>(args);
-    case OpcodeType::SHAR: return SHAR<false>(args);
-    case OpcodeType::SHLL: return SHLL<false>(args);
-    case OpcodeType::SHLL2: return SHLL2<false>(args);
-    case OpcodeType::SHLL8: return SHLL8<false>(args);
-    case OpcodeType::SHLL16: return SHLL16<false>(args);
-    case OpcodeType::SHLR: return SHLR<false>(args);
-    case OpcodeType::SHLR2: return SHLR2<false>(args);
-    case OpcodeType::SHLR8: return SHLR8<false>(args);
-    case OpcodeType::SHLR16: return SHLR16<false>(args);
-    case OpcodeType::SUB: return SUB<false>(args);
-    case OpcodeType::SUBC: return SUBC<false>(args);
-    case OpcodeType::SUBV: return SUBV<false>(args);
-    case OpcodeType::XOR_R: return XOR<false>(args);
-    case OpcodeType::XOR_I: return XORI<false>(args);
-    case OpcodeType::XOR_M: return XORM<debug, enableSH2Cache, false>(args);
-
-    case OpcodeType::DT: return DT<false>(args);
-
-    case OpcodeType::CLRMAC: return CLRMAC<false>();
-    case OpcodeType::MACW: return MACW<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MACL: return MACL<debug, enableSH2Cache, false>(args);
-    case OpcodeType::MUL: return MULL<false>(args);
-    case OpcodeType::MULS: return MULS<false>(args);
-    case OpcodeType::MULU: return MULU<false>(args);
-    case OpcodeType::DMULS: return DMULS<false>(args);
-    case OpcodeType::DMULU: return DMULU<false>(args);
-
-    case OpcodeType::DIV0S: return DIV0S<false>(args);
-    case OpcodeType::DIV0U: return DIV0U<false>();
-    case OpcodeType::DIV1: return DIV1<false>(args);
-
-    case OpcodeType::CMP_EQ_I: return CMPIM<false>(args);
-    case OpcodeType::CMP_EQ_R: return CMPEQ<false>(args);
-    case OpcodeType::CMP_GE: return CMPGE<false>(args);
-    case OpcodeType::CMP_GT: return CMPGT<false>(args);
-    case OpcodeType::CMP_HI: return CMPHI<false>(args);
-    case OpcodeType::CMP_HS: return CMPHS<false>(args);
-    case OpcodeType::CMP_PL: return CMPPL<false>(args);
-    case OpcodeType::CMP_PZ: return CMPPZ<false>(args);
-    case OpcodeType::CMP_STR: return CMPSTR<false>(args);
-    case OpcodeType::TAS: return TAS<debug, enableSH2Cache, false>(args);
-    case OpcodeType::TST_R: return TST<false>(args);
-    case OpcodeType::TST_I: return TSTI<false>(args);
-    case OpcodeType::TST_M: return TSTM<debug, enableSH2Cache, false>(args);
-
-    case OpcodeType::BF: return BF(args);
-    case OpcodeType::BFS: return BFS(args);
-    case OpcodeType::BT: return BT(args);
-    case OpcodeType::BTS: return BTS(args);
-    case OpcodeType::BRA: return BRA(args);
-    case OpcodeType::BRAF: return BRAF(args);
-    case OpcodeType::BSR: return BSR(args);
-    case OpcodeType::BSRF: return BSRF(args);
-    case OpcodeType::JMP: return JMP(args);
-    case OpcodeType::JSR: return JSR(args);
-    case OpcodeType::TRAPA: return TRAPA<debug, enableSH2Cache>(args);
-
-    case OpcodeType::RTE: return RTE<debug, enableSH2Cache>();
-    case OpcodeType::RTS: return RTS();
-
-    case OpcodeType::Illegal: return EnterException<debug, enableSH2Cache>(xvGenIllegalInstr);
-
-    case OpcodeType::Delay_NOP: return NOP<true>();
-
-    case OpcodeType::Delay_SLEEP: return SLEEP();
-
-    case OpcodeType::Delay_MOV_R: return MOV<true>(args);
-    case OpcodeType::Delay_MOVB_L: return MOVBL<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_L: return MOVWL<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_L: return MOVLL<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_L0: return MOVBL0<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_L0: return MOVWL0<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_L0: return MOVLL0<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_L4: return MOVBL4<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_L4: return MOVWL4<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_L4: return MOVLL4<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_LG: return MOVBLG<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_LG: return MOVWLG<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_LG: return MOVLLG<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_M: return MOVBM<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_M: return MOVWM<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_M: return MOVLM<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_P: return MOVBP<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_P: return MOVWP<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_P: return MOVLP<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_S: return MOVBS<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_S: return MOVWS<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_S: return MOVLS<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_S0: return MOVBS0<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_S0: return MOVWS0<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_S0: return MOVLS0<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_S4: return MOVBS4<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_S4: return MOVWS4<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_S4: return MOVLS4<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVB_SG: return MOVBSG<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVW_SG: return MOVWSG<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_SG: return MOVLSG<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOV_I: return MOVI<true>(args);
-    case OpcodeType::Delay_MOVW_I: return MOVWI<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVL_I: return MOVLI<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MOVA: return MOVA<true>(args);
-    case OpcodeType::Delay_MOVT: return MOVT<true>(args);
-    case OpcodeType::Delay_CLRT: return CLRT<true>();
-    case OpcodeType::Delay_SETT: return SETT<true>();
-
-    case OpcodeType::Delay_EXTUB: return EXTUB<true>(args);
-    case OpcodeType::Delay_EXTUW: return EXTUW<true>(args);
-    case OpcodeType::Delay_EXTSB: return EXTSB<true>(args);
-    case OpcodeType::Delay_EXTSW: return EXTSW<true>(args);
-    case OpcodeType::Delay_SWAPB: return SWAPB<true>(args);
-    case OpcodeType::Delay_SWAPW: return SWAPW<true>(args);
-    case OpcodeType::Delay_XTRCT: return XTRCT<true>(args);
-
-    case OpcodeType::Delay_LDC_GBR_R: return LDCGBR<true>(args);
-    case OpcodeType::Delay_LDC_SR_R: return LDCSR<true>(args);
-    case OpcodeType::Delay_LDC_VBR_R: return LDCVBR<true>(args);
-    case OpcodeType::Delay_LDS_MACH_R: return LDSMACH<true>(args);
-    case OpcodeType::Delay_LDS_MACL_R: return LDSMACL<true>(args);
-    case OpcodeType::Delay_LDS_PR_R: return LDSPR<true>(args);
-    case OpcodeType::Delay_STC_GBR_R: return STCGBR<true>(args);
-    case OpcodeType::Delay_STC_SR_R: return STCSR<true>(args);
-    case OpcodeType::Delay_STC_VBR_R: return STCVBR<true>(args);
-    case OpcodeType::Delay_STS_MACH_R: return STSMACH<true>(args);
-    case OpcodeType::Delay_STS_MACL_R: return STSMACL<true>(args);
-    case OpcodeType::Delay_STS_PR_R: return STSPR<true>(args);
-    case OpcodeType::Delay_LDC_GBR_M: return LDCMGBR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_LDC_SR_M: return LDCMSR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_LDC_VBR_M: return LDCMVBR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_LDS_MACH_M: return LDSMMACH<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_LDS_MACL_M: return LDSMMACL<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_LDS_PR_M: return LDSMPR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_STC_GBR_M: return STCMGBR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_STC_SR_M: return STCMSR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_STC_VBR_M: return STCMVBR<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_STS_MACH_M: return STSMMACH<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_STS_MACL_M: return STSMMACL<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_STS_PR_M: return STSMPR<debug, enableSH2Cache, true>(args);
-
-    case OpcodeType::Delay_ADD: return ADD<true>(args);
-    case OpcodeType::Delay_ADD_I: return ADDI<true>(args);
-    case OpcodeType::Delay_ADDC: return ADDC<true>(args);
-    case OpcodeType::Delay_ADDV: return ADDV<true>(args);
-    case OpcodeType::Delay_AND_R: return AND<true>(args);
-    case OpcodeType::Delay_AND_I: return ANDI<true>(args);
-    case OpcodeType::Delay_AND_M: return ANDM<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_NEG: return NEG<true>(args);
-    case OpcodeType::Delay_NEGC: return NEGC<true>(args);
-    case OpcodeType::Delay_NOT: return NOT<true>(args);
-    case OpcodeType::Delay_OR_R: return OR<true>(args);
-    case OpcodeType::Delay_OR_I: return ORI<true>(args);
-    case OpcodeType::Delay_OR_M: return ORM<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_ROTCL: return ROTCL<true>(args);
-    case OpcodeType::Delay_ROTCR: return ROTCR<true>(args);
-    case OpcodeType::Delay_ROTL: return ROTL<true>(args);
-    case OpcodeType::Delay_ROTR: return ROTR<true>(args);
-    case OpcodeType::Delay_SHAL: return SHAL<true>(args);
-    case OpcodeType::Delay_SHAR: return SHAR<true>(args);
-    case OpcodeType::Delay_SHLL: return SHLL<true>(args);
-    case OpcodeType::Delay_SHLL2: return SHLL2<true>(args);
-    case OpcodeType::Delay_SHLL8: return SHLL8<true>(args);
-    case OpcodeType::Delay_SHLL16: return SHLL16<true>(args);
-    case OpcodeType::Delay_SHLR: return SHLR<true>(args);
-    case OpcodeType::Delay_SHLR2: return SHLR2<true>(args);
-    case OpcodeType::Delay_SHLR8: return SHLR8<true>(args);
-    case OpcodeType::Delay_SHLR16: return SHLR16<true>(args);
-    case OpcodeType::Delay_SUB: return SUB<true>(args);
-    case OpcodeType::Delay_SUBC: return SUBC<true>(args);
-    case OpcodeType::Delay_SUBV: return SUBV<true>(args);
-    case OpcodeType::Delay_XOR_R: return XOR<true>(args);
-    case OpcodeType::Delay_XOR_I: return XORI<true>(args);
-    case OpcodeType::Delay_XOR_M: return XORM<debug, enableSH2Cache, true>(args);
-
-    case OpcodeType::Delay_DT: return DT<true>(args);
-
-    case OpcodeType::Delay_CLRMAC: return CLRMAC<true>();
-    case OpcodeType::Delay_MACW: return MACW<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MACL: return MACL<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_MUL: return MULL<true>(args);
-    case OpcodeType::Delay_MULS: return MULS<true>(args);
-    case OpcodeType::Delay_MULU: return MULU<true>(args);
-    case OpcodeType::Delay_DMULS: return DMULS<true>(args);
-    case OpcodeType::Delay_DMULU: return DMULU<true>(args);
-
-    case OpcodeType::Delay_DIV0S: return DIV0S<true>(args);
-    case OpcodeType::Delay_DIV0U: return DIV0U<true>();
-    case OpcodeType::Delay_DIV1: return DIV1<true>(args);
-
-    case OpcodeType::Delay_CMP_EQ_I: return CMPIM<true>(args);
-    case OpcodeType::Delay_CMP_EQ_R: return CMPEQ<true>(args);
-    case OpcodeType::Delay_CMP_GE: return CMPGE<true>(args);
-    case OpcodeType::Delay_CMP_GT: return CMPGT<true>(args);
-    case OpcodeType::Delay_CMP_HI: return CMPHI<true>(args);
-    case OpcodeType::Delay_CMP_HS: return CMPHS<true>(args);
-    case OpcodeType::Delay_CMP_PL: return CMPPL<true>(args);
-    case OpcodeType::Delay_CMP_PZ: return CMPPZ<true>(args);
-    case OpcodeType::Delay_CMP_STR: return CMPSTR<true>(args);
-    case OpcodeType::Delay_TAS: return TAS<debug, enableSH2Cache, true>(args);
-    case OpcodeType::Delay_TST_R: return TST<true>(args);
-    case OpcodeType::Delay_TST_I: return TSTI<true>(args);
-    case OpcodeType::Delay_TST_M: return TSTM<debug, enableSH2Cache, true>(args);
-
-    case OpcodeType::IllegalSlot: return EnterException<debug, enableSH2Cache>(xvSlotIllegalInstr);
-    }
-
-    util::unreachable();
+    return DispatchOpcode<debug, enableSH2Cache>(opcode, args);
 }
 
 template uint64 SH2::InterpretNext<false, false, false>();

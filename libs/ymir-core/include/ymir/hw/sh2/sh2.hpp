@@ -1012,6 +1012,8 @@ private:
     // Returns the number of cycles executed.
     template <bool debug, bool enableSH2Cache, bool enableBlockCache = false>
     uint64 InterpretNext();
+    template <bool debug, bool enableSH2Cache>
+    uint64 DispatchOpcode(OpcodeType opcode, const DecodedArgs &args);
 
 #define TPL_TRAITS template <bool debug, bool enableSH2Cache>
 #define TPL_TRAITS_DS template <bool debug, bool enableSH2Cache, bool delaySlot>

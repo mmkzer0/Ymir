@@ -265,6 +265,7 @@ add_library(ymir-core
     #src/ymir/hw/sh1/sh1_disasm.cpp
 
     src/ymir/hw/sh2/sh2.cpp
+    src/ymir/hw/sh2/sh2_dispatch_map.inc
     src/ymir/hw/sh2/sh2_decode.cpp
     src/ymir/hw/sh2/sh2_disasm.cpp
 
@@ -404,6 +405,18 @@ target_compile_definitions(ymir-core PUBLIC "Ymir_DEV_ASSERTIONS=$<BOOL:${Ymir_E
 target_compile_definitions(ymir-core PUBLIC "Ymir_DEV_BUILD=$<BOOL:${Ymir_DEV_BUILD}>")
 target_compile_definitions(ymir-core PUBLIC "Ymir_EXTRA_INLINING=$<BOOL:${Ymir_EXTRA_INLINING}>")
 target_compile_definitions(ymir-core PUBLIC "TOML_EXCEPTIONS=0")
+if (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "SWITCH")
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_SWITCH=1)
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_FUNCPTR=0)
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_CGOTO=0)
+elseif (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "FUNCPTR")
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_SWITCH=0)
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_FUNCPTR=1)
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_CGOTO=0)
+else ()
+    # CMakeLists.txt already rejects unsupported backends (including CGOTO for P8.1).
+    message(FATAL_ERROR "Invalid SH2 dispatch backend state: ${Ymir_SH2_DISPATCH_BACKEND_UPPER}")
+endif ()
 
 ## Generate the export header and attach it to the target
 include(GenerateExportHeader)

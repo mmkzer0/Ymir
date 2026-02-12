@@ -23,6 +23,18 @@ option(Ymir_ENABLE_DEVLOG "Enable development logs" ${Ymir_DEV_BUILD})
 option(Ymir_ENABLE_DEV_ASSERTIONS "Enable development-time assertions" OFF)
 option(Ymir_ENABLE_IMGUI_DEMO "Enable ImGui demo window" ON)
 option(Ymir_ENABLE_UPDATE_CHECKS "Enable update checks" ON)
+set(Ymir_SH2_DISPATCH_BACKEND "SWITCH" CACHE STRING "SH2 dispatch backend (SWITCH, FUNCPTR, CGOTO)")
+set_property(CACHE Ymir_SH2_DISPATCH_BACKEND PROPERTY STRINGS SWITCH FUNCPTR CGOTO)
+string(TOUPPER "${Ymir_SH2_DISPATCH_BACKEND}" Ymir_SH2_DISPATCH_BACKEND_UPPER)
+if (NOT Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "SWITCH" AND
+    NOT Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "FUNCPTR" AND
+    NOT Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "CGOTO")
+    message(FATAL_ERROR "Invalid Ymir_SH2_DISPATCH_BACKEND value: ${Ymir_SH2_DISPATCH_BACKEND}. "
+                        "Valid values: SWITCH, FUNCPTR, CGOTO.")
+endif ()
+if (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "CGOTO")
+    message(FATAL_ERROR "Ymir_SH2_DISPATCH_BACKEND=CGOTO is reserved for Phase P8.2 and is not implemented yet.")
+endif ()
 
 if (Ymir_DEV_BUILD)
     message(STATUS "Ymir: Development build")
@@ -32,6 +44,7 @@ endif ()
 message(STATUS "Ymir: Devlog ${Ymir_ENABLE_DEVLOG}")
 message(STATUS "Ymir: Extra inlining ${Ymir_EXTRA_INLINING}")
 message(STATUS "Ymir: Update checks ${Ymir_ENABLE_UPDATE_CHECKS}")
+message(STATUS "Ymir: SH2 dispatch backend ${Ymir_SH2_DISPATCH_BACKEND_UPPER}")
 
 # Create Universal Binary on MacOS
 #if (APPLE)
