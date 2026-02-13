@@ -15,12 +15,15 @@ inline constexpr uint16 instrMOVI_R0_1 = 0xE001;
 inline constexpr uint16 instrMOVI_R0_2 = 0xE002;
 inline constexpr uint16 instrMOVI_R0_3 = 0xE003;
 inline constexpr uint16 instrMOVI_R0_4 = 0xE004;
+inline constexpr uint16 instrMOVI_R1_2 = 0xE102;
+inline constexpr uint16 instrMOVI_R2_3 = 0xE203;
+inline constexpr uint16 instrMOVI_R3_4 = 0xE304;
 inline constexpr uint16 instrMOVI_R0_7F = 0xE07F;
 inline constexpr uint32 kProgramStart = 0x0000'1000;
 inline constexpr uint32 kProgramLength = 32;
 
 struct TestSubject {
-    sys::SystemFeatures systemFeatures{};
+    mutable sys::SystemFeatures systemFeatures{};
     mutable core::Scheduler scheduler{};
     mutable sys::SH2Bus bus{};
     mutable sh2::SH2 sh2{scheduler, bus, true, systemFeatures};
@@ -65,6 +68,7 @@ struct TestSubject {
     void ResetState() const {
         scheduler.Reset();
         sh2.Reset(true);
+        systemFeatures.enableBlockBurst = false;
         counters = {};
         memory8.clear();
         memory16.clear();
@@ -84,6 +88,15 @@ struct TestSubject {
     template <bool debug, bool enableSH2Cache, bool enableBlockCache>
     uint64 RunStep() const {
         return sh2.Step<debug, enableSH2Cache, enableBlockCache>();
+    }
+
+    template <bool debug, bool enableSH2Cache, bool enableBlockCache>
+    uint64 RunAdvance(uint64 cycles, uint64 spilloverCycles = 0) const {
+        return sh2.Advance<debug, enableSH2Cache, enableBlockCache>(cycles, spilloverCycles);
+    }
+
+    void SetBurstEnabled(bool enabled) const {
+        systemFeatures.enableBlockBurst = enabled;
     }
 
     uint8 Read8(uint32 address) const {
@@ -515,8 +528,7 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 reuse window extends past o
     }
 }
 
-TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at page boundary",
-                             "[sh2][block-cache][cap32]") {
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at page boundary", "[sh2][block-cache][cap32]") {
     ResetState();
 
     constexpr uint32 entry = kProgramStart + 0xFF0u;
@@ -541,8 +553,7 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at page b
     CHECK(counters.peekRead16 > peekReadsAfterBuild);
 }
 
-TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at barriers",
-                             "[sh2][block-cache][cap32]") {
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at barriers", "[sh2][block-cache][cap32]") {
     ResetState();
 
     constexpr uint32 entry = kProgramStart;
@@ -573,6 +584,157 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 cap32 block still stops at barrie
     CHECK(probe.PC() == entry + 6u);
     CHECK(probe.IsInDelaySlot() == false);
     CHECK(counters.peekRead16 > peekReadsAfterBuild);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 step stays single-op with burst enabled", "[sh2][block-cache][burst]") {
+    ResetState();
+    SetBurstEnabled(true);
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+    probe.PC() = kProgramStart;
+
+    RunStep<false, false, true>();
+    CHECK(probe.PC() == kProgramStart + 2u);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst gate requires cached non-debug non-SH2-cache mode",
+                             "[sh2][block-cache][burst]") {
+    ResetState();
+    SetBurstEnabled(true);
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+    probe.PC() = kProgramStart;
+
+    const uint32 uncachedNormalReadsBefore = counters.normalRead16;
+    const uint32 uncachedPeekReadsBefore = counters.peekRead16;
+    RunAdvance<false, false, false>(2);
+    CHECK(probe.PC() == kProgramStart + 4u);
+    CHECK(counters.normalRead16 > uncachedNormalReadsBefore);
+    CHECK(counters.peekRead16 == uncachedPeekReadsBefore);
+
+    ResetState();
+    SetBurstEnabled(true);
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+    probe.PC() = kProgramStart;
+
+    const uint32 debugNormalReadsBefore = counters.normalRead16;
+    const uint32 debugPeekReadsBefore = counters.peekRead16;
+    RunAdvance<true, false, true>(2);
+    CHECK(probe.PC() == kProgramStart + 4u);
+    CHECK(counters.normalRead16 > debugNormalReadsBefore);
+    CHECK(counters.peekRead16 == debugPeekReadsBefore);
+
+    ResetState();
+    SetBurstEnabled(true);
+    SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+    probe.PC() = 0xA000'1000;
+
+    const uint32 sh2cacheNormalReadsBefore = counters.normalRead16;
+    const uint32 sh2cachePeekReadsBefore = counters.peekRead16;
+    RunAdvance<false, true, true>(2);
+    CHECK(probe.PC() == 0xA000'1004u);
+    CHECK(counters.normalRead16 > sh2cacheNormalReadsBefore);
+    CHECK(counters.peekRead16 > sh2cachePeekReadsBefore);
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst register-only execution matches step reference",
+                             "[sh2][block-cache][burst]") {
+    TestSubject reference{};
+
+    auto setupProgram = [](const TestSubject &subject) {
+        subject.ResetState();
+        subject.SetInstruction(kProgramStart + 0u, instrMOVI_R0_1);
+        subject.SetInstruction(kProgramStart + 2u, instrMOVI_R1_2);
+        subject.SetInstruction(kProgramStart + 4u, instrMOVI_R2_3);
+        subject.SetInstruction(kProgramStart + 6u, instrMOVI_R3_4);
+        subject.SetInstruction(kProgramStart + 8u, instrMOVI_R0_2);
+        subject.SetInstruction(kProgramStart + 10u, instrMOVI_R0_3);
+        subject.probe.PC() = kProgramStart;
+    };
+
+    setupProgram(*this);
+    SetBurstEnabled(true);
+    setupProgram(reference);
+
+    uint64 referenceCycles = 0;
+    for (uint32 i = 0; i < 6; ++i) {
+        referenceCycles += reference.RunStep<false, false, true>();
+    }
+
+    constexpr uint64 firstBurstBudget = 3;
+    RunAdvance<false, false, true>(firstBurstBudget);
+    RunAdvance<false, false, true>(referenceCycles - firstBurstBudget);
+
+    CHECK(probe.PC() == reference.probe.PC());
+    CHECK(probe.R(0) == reference.probe.R(0));
+    CHECK(probe.R(1) == reference.probe.R(1));
+    CHECK(probe.R(2) == reference.probe.R(2));
+    CHECK(probe.R(3) == reference.probe.R(3));
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst stops correctly at barriers and matches step reference",
+                             "[sh2][block-cache][burst]") {
+    TestSubject reference{};
+
+    auto setupProgram = [](const TestSubject &subject) {
+        subject.ResetState();
+        subject.SetInstruction(kProgramStart + 0u, instrBRAminus1);
+        subject.SetInstruction(kProgramStart + 2u, instrNOP);
+        subject.SetInstruction(kProgramStart + 4u, instrBRAminus4);
+        subject.SetInstruction(kProgramStart + 6u, instrNOP);
+        subject.probe.PC() = kProgramStart;
+    };
+
+    setupProgram(*this);
+    SetBurstEnabled(true);
+    setupProgram(reference);
+
+    uint64 referenceCycles = 0;
+    for (uint32 i = 0; i < 8; ++i) {
+        referenceCycles += reference.RunStep<false, false, true>();
+    }
+
+    RunAdvance<false, false, true>(referenceCycles);
+
+    CHECK(probe.PC() == reference.probe.PC());
+    CHECK(probe.IsInDelaySlot() == reference.probe.IsInDelaySlot());
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst respects interrupt service boundary",
+                             "[sh2][block-cache][burst]") {
+    TestSubject reference{};
+
+    constexpr uint8 intrVec = 0x60;
+    constexpr uint8 intrLevel = 5;
+    constexpr uint32 intrHandler = 0x0000'2000;
+
+    auto setupProgram = [](const TestSubject &subject) {
+        subject.ResetState();
+        subject.SetInstructionSpan(kProgramStart, instrNOP, kProgramLength);
+        subject.probe.PC() = kProgramStart;
+    };
+
+    auto setupInterrupt = [&](const TestSubject &subject) {
+        subject.Write32(static_cast<uint32>(intrVec) * 4u, intrHandler);
+        subject.probe.SR().ILevel = 0;
+        subject.probe.INTC().SetVector(sh2::InterruptSource::IRL, intrVec);
+        subject.probe.INTC().SetLevel(sh2::InterruptSource::IRL, intrLevel);
+        subject.probe.RaiseInterrupt(sh2::InterruptSource::IRL);
+        REQUIRE(subject.probe.CheckInterrupts());
+    };
+
+    setupProgram(*this);
+    SetBurstEnabled(true);
+    setupInterrupt(*this);
+
+    setupProgram(reference);
+    setupInterrupt(reference);
+
+    const uint64 referenceCycles = reference.RunStep<false, false, true>();
+    const uint64 burstCycles = RunAdvance<false, false, true>(referenceCycles);
+
+    CHECK(burstCycles == referenceCycles);
+    CHECK(probe.PC() == reference.probe.PC());
+    CHECK(probe.R(15) == reference.probe.R(15));
+    CHECK(probe.SR().ILevel == reference.probe.SR().ILevel);
 }
 
 } // namespace sh2_block_cache

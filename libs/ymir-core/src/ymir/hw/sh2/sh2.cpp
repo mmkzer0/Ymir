@@ -360,8 +360,20 @@ FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
     while (cyclesExecuted < cycles) {
         // [[maybe_unused]] const uint32 prevPC = PC; // debug aid
 
-        // TODO: choose between interpreter (cached or uncached) and JIT recompiler
-        cyclesExecuted += InterpretNext<debug, enableSH2Cache, enableBlockCache>();
+        bool madeProgress = false;
+        if constexpr (!debug && enableBlockCache && !enableSH2Cache) {
+            if (m_systemFeatures.enableBlockBurst) {
+                const uint64 cyclesBeforeBurst = cyclesExecuted;
+                const BurstExecResult burst = ExecuteCachedBurstNoSH2Cache(cycles - cyclesExecuted);
+                madeProgress = burst.madeProgress;
+                YMIR_DEV_ASSERT(!madeProgress || (cyclesExecuted - cyclesBeforeBurst) == burst.cyclesRetired);
+            }
+        }
+
+        if (!madeProgress) {
+            // TODO: choose between interpreter (cached or uncached) and JIT recompiler
+            cyclesExecuted += InterpretNext<debug, enableSH2Cache, enableBlockCache>();
+        }
 
         // If PC is not in any of these places, something went horribly wrong
 
@@ -2266,6 +2278,130 @@ FORCE_INLINE uint64 SH2::DispatchOpcode(OpcodeType opcode, const DecodedArgs &ar
 
 // -----------------------------------------------------------------------------
 // Instruction interpreters
+
+FORCE_INLINE SH2::BurstExecResult SH2::ExecuteCachedBurstNoSH2Cache(uint64 remainingCycles) {
+    BurstExecResult result{};
+    if (remainingCycles == 0) {
+        result.stopReason = BurstStopReason::CycleBudget;
+        return result;
+    }
+
+    // Let the regular single-op path service interrupts so behavior remains identical.
+    if (m_intrPending) [[unlikely]] {
+        result.stopReason = BurstStopReason::InterruptPending;
+        return result;
+    }
+
+    const DecodeTable &decodeTable = DecodeTable::s_instance;
+    const uint32 currentPC = PC;
+    const bool currentDelaySlot = m_delaySlot;
+    CachedBlockCursor &cursor = m_cachedBlockCursor;
+    std::vector<CachedBlock> &cachedBlocks = m_cachedBlocks;
+    const auto &pageGenerations = m_cachedBlockPageGenerations;
+
+    if (!cursor.valid || cursor.expectedPC != currentPC || cursor.expectedDelaySlot != currentDelaySlot) {
+        const size_t blockIndex = FindOrCreateCachedBlock(currentPC, currentDelaySlot);
+        if (blockIndex == kInvalidCachedBlockIndex) [[unlikely]] {
+            cursor.valid = false;
+            result.stopReason = BurstStopReason::Fallback;
+            return result;
+        }
+
+        cursor.blockIndex = blockIndex;
+        cursor.instructionIndex = 0;
+        cursor.expectedPC = currentPC;
+        cursor.expectedDelaySlot = currentDelaySlot;
+        cursor.valid = true;
+    }
+
+    if (cursor.blockIndex >= cachedBlocks.size()) [[unlikely]] {
+        cursor.valid = false;
+        result.stopReason = BurstStopReason::BlockInvalid;
+        return result;
+    }
+
+    CachedBlock &block = cachedBlocks[cursor.blockIndex];
+    const bool needsEntryRebuild =
+        cursor.instructionIndex == 0 &&
+        (block.instructionCount == 0 || block.startPC != currentPC || block.startDelaySlot != currentDelaySlot ||
+         block.busPageGeneration != pageGenerations[block.startBusPage]);
+    const bool needsRangeRebuild = cursor.instructionIndex >= block.instructionCount;
+    if (needsEntryRebuild || needsRangeRebuild) {
+        BuildCachedBlock<false>(block, currentPC, currentDelaySlot);
+        cursor.instructionIndex = 0;
+    }
+
+    if (block.instructionCount == 0 || cursor.instructionIndex >= block.instructionCount) [[unlikely]] {
+        cursor.valid = false;
+        result.stopReason = BurstStopReason::BlockInvalid;
+        return result;
+    }
+
+    while (true) {
+        if (result.cyclesRetired >= remainingCycles) {
+            result.stopReason = BurstStopReason::CycleBudget;
+            break;
+        }
+        if (result.opsRetired >= kCachedBurstMaxOpsP91) {
+            result.stopReason = BurstStopReason::OpCap;
+            break;
+        }
+        if (!cursor.valid || cursor.blockIndex >= cachedBlocks.size()) [[unlikely]] {
+            cursor.valid = false;
+            result.stopReason = BurstStopReason::BlockInvalid;
+            break;
+        }
+
+        CachedBlock &currBlock = cachedBlocks[cursor.blockIndex];
+        if (cursor.instructionIndex >= currBlock.instructionCount) [[unlikely]] {
+            cursor.valid = false;
+            result.stopReason = BurstStopReason::BlockEnd;
+            break;
+        }
+
+        const uint32 opPC = PC;
+        const bool opDelaySlot = m_delaySlot;
+        if (cursor.expectedPC != opPC || cursor.expectedDelaySlot != opDelaySlot) [[unlikely]] {
+            cursor.valid = false;
+            result.stopReason = BurstStopReason::BlockInvalid;
+            break;
+        }
+
+        const uint16 instr = currBlock.instructions[cursor.instructionIndex];
+        if (decodeTable.mem[instr].anyAccess) {
+            result.stopReason = BurstStopReason::UnsafeMemoryOp;
+            break;
+        }
+
+        const OpcodeType opcode = currBlock.decodedOpcodes[cursor.instructionIndex];
+        const DecodedArgs &args = decodeTable.args[instr];
+        const uint64 opCycles = DispatchOpcode<false, false>(opcode, args);
+        result.madeProgress = true;
+        result.cyclesRetired += opCycles;
+        ++result.opsRetired;
+        m_cyclesExecuted += opCycles;
+
+        // Keep cursor semantics aligned with the existing single-op cached path.
+        const size_t nextInstructionIndex = cursor.instructionIndex + 1;
+        if (nextInstructionIndex < currBlock.instructionCount) {
+            cursor.instructionIndex = nextInstructionIndex;
+            cursor.expectedPC = opPC + 2;
+            // Builder stops before control-flow opcodes that can arm delay slots.
+            cursor.expectedDelaySlot = false;
+        } else {
+            cursor.valid = false;
+            result.stopReason = BurstStopReason::BlockEnd;
+            break;
+        }
+
+        if (m_intrPending) [[unlikely]] {
+            result.stopReason = BurstStopReason::InterruptPending;
+            break;
+        }
+    }
+
+    return result;
+}
 
 template <bool debug, bool enableSH2Cache, bool enableBlockCache>
 FORCE_INLINE uint64 SH2::InterpretNext() {
