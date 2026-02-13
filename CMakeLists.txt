@@ -33,7 +33,10 @@ if (NOT Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "SWITCH" AND
                         "Valid values: SWITCH, FUNCPTR, CGOTO.")
 endif ()
 if (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "CGOTO")
-    message(FATAL_ERROR "Ymir_SH2_DISPATCH_BACKEND=CGOTO is reserved for Phase P8.2 and is not implemented yet.")
+    if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+        message(FATAL_ERROR "Ymir_SH2_DISPATCH_BACKEND=CGOTO requires a compiler with labels-as-values "
+                            "support (Clang/AppleClang/GNU).")
+    endif ()
 endif ()
 
 if (Ymir_DEV_BUILD)
