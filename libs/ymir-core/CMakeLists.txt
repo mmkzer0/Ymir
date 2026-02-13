@@ -413,8 +413,11 @@ elseif (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "FUNCPTR")
     target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_SWITCH=0)
     target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_FUNCPTR=1)
     target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_CGOTO=0)
+elseif (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "CGOTO")
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_SWITCH=0)
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_FUNCPTR=0)
+    target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_CGOTO=1)
 else ()
-    # CMakeLists.txt already rejects unsupported backends (including CGOTO for P8.1).
     message(FATAL_ERROR "Invalid SH2 dispatch backend state: ${Ymir_SH2_DISPATCH_BACKEND_UPPER}")
 endif ()
 
