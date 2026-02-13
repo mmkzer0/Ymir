@@ -904,6 +904,8 @@ private:
 
     // Phase 6.5 keeps conservative execution semantics while extending block length for better reuse.
     static constexpr size_t kCachedBlockMaxInstructions = 32;
+    // Phase 9.1 conservative burst cap for cached interpreter execution.
+    static constexpr uint32 kCachedBurstMaxOpsP91 = 8;
     static constexpr uint32 kCachedBlockPageSize = 0x1000;
     static constexpr uint32 kCachedBlockPageMask = ~(kCachedBlockPageSize - 1u);
     static constexpr uint32 kCachedBlockPageBits = 12;
@@ -941,6 +943,26 @@ private:
         bool valid = false;
     };
 
+    enum class BurstStopReason : uint8 {
+        None,
+        NotEligible,
+        BlockMiss,
+        BlockInvalid,
+        BlockEnd,
+        CycleBudget,
+        OpCap,
+        InterruptPending,
+        UnsafeMemoryOp,
+        Fallback,
+    };
+
+    struct BurstExecResult {
+        uint64 cyclesRetired = 0;
+        uint32 opsRetired = 0;
+        BurstStopReason stopReason = BurstStopReason::None;
+        bool madeProgress = false;
+    };
+
     // Bucket index format: (busPage << 1) | delaySlotBit
     std::array<sint32, kCachedBlockPageCount * 2> m_cachedBlockBucketHeads{};
     // Lookup buckets are allocated from VM-backed chunks and recycled across PurgeBlockCache/ClearCachedBlocks calls.
@@ -964,6 +986,10 @@ private:
 
     template <bool enableSH2Cache>
     void BuildCachedBlock(CachedBlock &block, uint32 startPC, bool startDelaySlot);
+
+    // Executes a conservative cached burst with SH-2 cache emulation disabled.
+    // Used by Advance() when debug tracing is off and cached interpreter burst mode is enabled.
+    FORCE_INLINE BurstExecResult ExecuteCachedBurstNoSH2Cache(uint64 remainingCycles);
 
     // -------------------------------------------------------------------------
     // Debugger
