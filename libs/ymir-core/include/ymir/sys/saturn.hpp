@@ -206,6 +206,18 @@ struct Saturn {
         return m_systemFeatures.enableBlockCache;
     }
 
+    /// @brief Enables or disables SH-2 cached-interpreter burst execution.
+    /// @param[in] enable whether to enable or disable SH-2 block burst mode
+    void EnableSH2BlockBurst(bool enable) {
+        configuration.system.enableBlockBurst = enable;
+    }
+
+    /// @brief Determines if SH-2 cached-interpreter burst execution is enabled.
+    /// @return the SH-2 block burst state
+    [[nodiscard]] bool IsSH2BlockBurstEnabled() const noexcept {
+        return m_systemFeatures.enableBlockBurst;
+    }
+
     /// @brief Runs the emulator until the end of the current frame using the current settings.
     ///
     /// The implementation of the function depends on the following parameters:
@@ -409,6 +421,10 @@ private:
     /// @brief Updates the SH-2 cached interpreter block setting and execution function pointers.
     /// @param[in] enabled whether to enable SH-2 block cache
     void UpdateSH2BlockCache(bool enabled);
+
+    /// @brief Updates the SH-2 cached-interpreter burst setting.
+    /// @param[in] enabled whether to enable SH-2 block burst mode
+    void UpdateSH2BlockBurst(bool enabled);
 
     /// @brief Updates the video standard to emulate and adjusts clock ratios across the system's components.
     /// @param[in] videoStandard the new video standard

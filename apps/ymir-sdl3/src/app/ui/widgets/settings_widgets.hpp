@@ -8,6 +8,7 @@ namespace settings::system {
 
     void EmulateSH2Cache(SharedContext &ctx);
     void EnableCachedInterpreter(SharedContext &ctx);
+    void EnableCachedInterpreterBurst(SharedContext &ctx);
 
 } // namespace settings::system
 

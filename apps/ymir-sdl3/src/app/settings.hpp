@@ -182,6 +182,7 @@ struct Settings {
 
         bool emulateSH2Cache;
         bool enableCachedInterpreter;
+        bool enableCachedInterpreterBurst;
 
         std::filesystem::path internalBackupRAMImagePath;
         bool internalBackupRAMPerGame;

@@ -50,6 +50,12 @@ struct Configuration {
         ///
         /// Enabling this option incurs a small performance penalty and purges all SH-2 caches.
         util::Observable<bool> emulateSH2Cache = false;
+
+        /// @brief Enables SH-2 cached-interpreter burst execution.
+        ///
+        /// This is an optional performance mode used by the SH-2 cached interpreter.
+        /// It has no effect unless cached interpreter blocks are enabled.
+        util::Observable<bool> enableBlockBurst = false;
     } system;
 
     /// @brief RTC configuration

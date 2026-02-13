@@ -118,6 +118,7 @@ EmuEvent LoadInternalBackupMemory();
 
 EmuEvent SetEmulateSH2Cache(bool enable);
 EmuEvent SetEnableCachedInterpreter(bool enable);
+EmuEvent SetEnableCachedInterpreterBurst(bool enable);
 EmuEvent SetCDBlockLLE(bool enable);
 
 EmuEvent EnableThreadedVDP1(bool enable);
