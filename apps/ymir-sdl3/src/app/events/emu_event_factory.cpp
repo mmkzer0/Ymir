@@ -568,6 +568,16 @@ EmuEvent SetEnableCachedInterpreter(bool enable) {
     });
 }
 
+EmuEvent SetEnableCachedInterpreterBurst(bool enable) {
+    return RunFunction([=](SharedContext &ctx) {
+        const bool currEnable = ctx.saturn.instance->IsSH2BlockBurstEnabled();
+        if (currEnable != enable) {
+            ctx.saturn.instance->EnableSH2BlockBurst(enable);
+            devlog::info<grp::base>("SH2 cached-interpreter burst {}", (enable ? "enabled" : "disabled"));
+        }
+    });
+}
+
 EmuEvent SetCDBlockLLE(bool enable) {
     return RunFunction([=](SharedContext &ctx) {
         ctx.saturn.instance->configuration.cdblock.useLLE = enable;

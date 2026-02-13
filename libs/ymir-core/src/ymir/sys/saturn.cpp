@@ -60,7 +60,8 @@ namespace {
     };
 
     // Main-bus executable ranges reduced to 4KB pages.
-    // Block-cache invalidation is page-granular, so page overlap is sufficient and cheaper than full address overlap checks.
+    // Block-cache invalidation is page-granular, so page overlap is sufficient and cheaper than full address overlap
+    // checks.
     static constexpr ExecutablePageRange kExecutableMainBusPageRanges[] = {
         {0x020'0000 >> kMainBusPageBits, 0x02F'FFFF >> kMainBusPageBits}, // Low WRAM
         {0x5A0'0000 >> kMainBusPageBits, 0x5A7'FFFF >> kMainBusPageBits}, // SCSP WRAM
@@ -201,11 +202,13 @@ Saturn::Saturn()
     m_systemFeatures.enableDebugTracing = false;
     m_systemFeatures.emulateSH2Cache = false;
     m_systemFeatures.enableBlockCache = false;
+    m_systemFeatures.enableBlockBurst = false;
     UpdateFunctionPointers();
 
     configuration.system.preferredRegionOrder.Observe(
         [&](const std::vector<core::config::sys::Region> &regions) { UpdatePreferredRegionOrder(regions); });
     configuration.system.emulateSH2Cache.Observe([&](bool enabled) { UpdateSH2CacheEmulation(enabled); });
+    configuration.system.enableBlockBurst.Observe([&](bool enabled) { UpdateSH2BlockBurst(enabled); });
     configuration.system.videoStandard.Observe(
         [&](core::config::sys::VideoStandard videoStandard) { UpdateVideoStandard(videoStandard); });
     configuration.cdblock.useLLE.Observe([&](bool enabled) { SetCDBlockLLE(enabled); });
@@ -885,6 +888,17 @@ void Saturn::UpdateSH2BlockCache(bool enabled) {
     // Runtime mode switches must drop decoded state to avoid using stale opcodes.
     masterSH2.PurgeBlockCache();
     slaveSH2.PurgeBlockCache();
+    UpdateFunctionPointers();
+}
+
+void Saturn::UpdateSH2BlockBurst(bool enabled) {
+    if (m_systemFeatures.enableBlockBurst == enabled) {
+        return;
+    }
+
+    // Burst execution is gated in the SH-2 runtime path. This flag is still tracked here so settings apply
+    // consistently at startup and runtime.
+    m_systemFeatures.enableBlockBurst = enabled;
     UpdateFunctionPointers();
 }
 
