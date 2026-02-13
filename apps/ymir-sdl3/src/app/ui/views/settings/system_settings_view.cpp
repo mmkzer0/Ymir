@@ -141,6 +141,14 @@ void SystemSettingsView::Display() {
     // -----------------------------------------------------------------------------------------------------------------
 
     ImGui::PushFont(m_context.fonts.sansSerif.bold, m_context.fontSizes.large);
+    ImGui::SeparatorText("Performance");
+    ImGui::PopFont();
+
+    widgets::settings::system::EnableCachedInterpreterBurst(m_context);
+
+    // -----------------------------------------------------------------------------------------------------------------
+
+    ImGui::PushFont(m_context.fonts.sansSerif.bold, m_context.fontSizes.large);
     ImGui::SeparatorText("Real-Time Clock");
     ImGui::PopFont();
 

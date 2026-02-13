@@ -441,6 +441,7 @@ int App::Run(const CommandLineOptions &options) {
     m_context.saturn.instance->EnableSH2CacheEmulation(settings.system.emulateSH2Cache);
     // Keep interpreter mode in sync with persisted settings on startup.
     m_context.saturn.instance->EnableSH2BlockCache(settings.system.enableCachedInterpreter);
+    m_context.saturn.instance->EnableSH2BlockBurst(settings.system.enableCachedInterpreterBurst);
     m_context.saturn.instance->UsePreferredRegion();
     m_context.EnqueueEvent(events::emu::LoadInternalBackupMemory());
     EnableRewindBuffer(settings.general.enableRewindBuffer);

@@ -64,6 +64,20 @@ namespace settings::system {
                                     ctx.displayScale);
     }
 
+    void EnableCachedInterpreterBurst(SharedContext &ctx) {
+        auto &settings = ctx.serviceLocator.GetRequired<Settings>();
+        bool enableCachedInterpreterBurst = settings.system.enableCachedInterpreterBurst;
+        if (settings.MakeDirty(
+                ImGui::Checkbox("Enable cached-interpreter burst (experimental)", &enableCachedInterpreterBurst))) {
+            ctx.EnqueueEvent(events::emu::SetEnableCachedInterpreterBurst(enableCachedInterpreterBurst));
+            settings.system.enableCachedInterpreterBurst = enableCachedInterpreterBurst;
+        }
+        widgets::ExplanationTooltip("Enables bounded multi-op retirement in the SH-2 cached interpreter.\n"
+                                    "This option is experimental and currently has no effect unless the cached "
+                                    "interpreter is also enabled.",
+                                    ctx.displayScale);
+    }
+
 } // namespace settings::system
 
 namespace settings::video {
