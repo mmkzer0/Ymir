@@ -2231,6 +2231,34 @@ FORCE_INLINE uint64 SH2::DispatchOpcode(OpcodeType opcode, const DecodedArgs &ar
 
     util::unreachable();
     return 0;
+#elif Ymir_SH2_DISPATCH_BACKEND_CGOTO
+    #if defined(__clang__) || defined(__GNUC__)
+    constexpr int kDispatchMapCounterBase = __COUNTER__;
+        #define SH2_DISPATCH_OP(opcodeName, ...)                                              \
+            static_assert(static_cast<size_t>(OpcodeType::opcodeName) ==                      \
+                              static_cast<size_t>(__COUNTER__ - kDispatchMapCounterBase - 1), \
+                          "SH-2 dispatch map order must match OpcodeType order for the CGOTO backend.");
+        #include "sh2_dispatch_map.inc"
+        #undef SH2_DISPATCH_OP
+
+    // Uses GNU labels-as-values to dispatch directly by opcode token without an indirect function call.
+    static void *const dispatchTargets[kSH2OpcodeCount] = {
+        #define SH2_DISPATCH_OP(opcodeName, ...) &&L_##opcodeName,
+        #include "sh2_dispatch_map.inc"
+        #undef SH2_DISPATCH_OP
+    };
+
+    goto *dispatchTargets[opcodeIndex];
+
+        #define SH2_DISPATCH_OP(opcodeName, ...) L_##opcodeName : return __VA_ARGS__;
+        #include "sh2_dispatch_map.inc"
+        #undef SH2_DISPATCH_OP
+
+    util::unreachable();
+    return 0;
+    #else
+        #error "SH-2 CGOTO backend requires GNU labels-as-values support (Clang/AppleClang/GNU)."
+    #endif
 #else
     #error "Unsupported SH-2 dispatch backend configuration."
 #endif
