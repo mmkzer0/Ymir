@@ -384,6 +384,17 @@ FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
                     YMIR_DEV_ASSERT(!madeProgress || (cyclesExecuted - cyclesBeforeBurst) == burst.cyclesRetired);
 #if Ymir_SH2_BURST_TELEMETRY
                     RecordBurstTelemetry(burst);
+                    // Track first burst attempt after a backoff streak expires.
+                    if (m_burstFirstAfterBackoff) {
+                        m_burstFirstAfterBackoff = false;
+                        ++m_burstTelemetry.firstAfterBackoff;
+                        if (burst.madeProgress) {
+                            ++m_burstTelemetry.firstAfterBackoffProgress;
+                        }
+                        if (burst.stopReason == BurstStopReason::UnsafeMemoryOp) {
+                            ++m_burstTelemetry.firstAfterBackoffUnsafe;
+                        }
+                    }
 #endif
                     UpdateBurstBackoff(burst);
                 }
@@ -627,6 +638,9 @@ FORCE_INLINE size_t SH2::FindOrCreateCachedBlock(uint32 pc, bool delaySlot) {
     m_cachedBlocks.emplace_back(std::move(block));
     lookupBucket->offsetHeads[offset] = static_cast<sint32>(blockIndex);
 
+#if Ymir_SH2_BURST_TELEMETRY
+    ++m_burstTelemetry.globalBlockMisses;
+#endif
     return blockIndex;
 }
 
@@ -644,6 +658,7 @@ void SH2::ClearCachedBlocks() {
     m_cachedBlockPageGenerations.fill(0);
     m_burstUnsafeOp0Streak = 0;
     m_burstBackoffCountdown = 0;
+    m_burstFirstAfterBackoff = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -2323,6 +2338,10 @@ FORCE_INLINE void SH2::UpdateBurstBackoff(const BurstExecResult &result) {
         }
         const size_t backoffIndex = std::min<size_t>(m_burstUnsafeOp0Streak - 1, kBackoffSteps.size() - 1);
         m_burstBackoffCountdown = kBackoffSteps[backoffIndex];
+#if Ymir_SH2_BURST_TELEMETRY
+        ++m_burstTelemetry.backoffActivations;
+        m_burstFirstAfterBackoff = true;
+#endif
         return;
     }
 
@@ -2332,44 +2351,79 @@ FORCE_INLINE void SH2::UpdateBurstBackoff(const BurstExecResult &result) {
 
 FORCE_INLINE void SH2::RecordBurstTelemetry(const BurstExecResult &result) {
 #if Ymir_SH2_BURST_TELEMETRY
-    ++m_burstTelemetry.attempts;
+    auto &t = m_burstTelemetry;
+    ++t.attempts;
     if (result.madeProgress) {
-        ++m_burstTelemetry.attemptsWithProgress;
+        ++t.attemptsWithProgress;
     } else {
-        ++m_burstTelemetry.zeroProgressAttempts;
+        ++t.zeroProgressAttempts;
     }
     if (result.stopReason == BurstStopReason::Fallback) {
-        ++m_burstTelemetry.fallbackCount;
+        ++t.fallbackCount;
     }
-    m_burstTelemetry.opsRetired += result.opsRetired;
-    m_burstTelemetry.cyclesRetired += result.cyclesRetired;
+    t.opsRetired += result.opsRetired;
+    t.cyclesRetired += result.cyclesRetired;
 
     const size_t stopReasonIndex = static_cast<size_t>(result.stopReason);
-    YMIR_DEV_ASSERT(stopReasonIndex < m_burstTelemetry.stopReasonCounts.size());
-    ++m_burstTelemetry.stopReasonCounts[stopReasonIndex];
+    YMIR_DEV_ASSERT(stopReasonIndex < t.stopReasonCounts.size());
+    ++t.stopReasonCounts[stopReasonIndex];
 
-    if (m_burstTelemetry.attempts >= m_burstTelemetry.nextReportAttempt) {
-        m_burstTelemetry.nextReportAttempt += kBurstTelemetryReportInterval;
+    // Ops-per-burst histogram
+    const size_t histBin = std::min<size_t>(result.opsRetired, kCachedBurstMaxOpsP91);
+    ++t.opsHistogram[histBin];
+
+    if (t.attempts >= t.nextReportAttempt) {
+        t.nextReportAttempt += kBurstTelemetryReportInterval;
         if constexpr (devlog::debug_enabled<grp::burst>) {
-            const double attempts = static_cast<double>(m_burstTelemetry.attempts);
-            const double avgOpsPerAttempt =
-                attempts > 0.0 ? static_cast<double>(m_burstTelemetry.opsRetired) / attempts : 0.0;
-            const double zeroProgressPct =
-                attempts > 0.0 ? (static_cast<double>(m_burstTelemetry.zeroProgressAttempts) * 100.0) / attempts : 0.0;
-            const double safeStopsPct =
-                attempts > 0.0
-                    ? (static_cast<double>(
-                           m_burstTelemetry.stopReasonCounts[static_cast<size_t>(BurstStopReason::UnsafeMemoryOp)]) *
-                       100.0) /
-                          attempts
-                    : 0.0;
+            const double att = static_cast<double>(t.attempts);
+            const double unsafeTotal =
+                static_cast<double>(t.stopReasonCounts[static_cast<size_t>(BurstStopReason::UnsafeMemoryOp)]);
+            auto pct = [](double num, double den) -> double { return den > 0.0 ? (num * 100.0) / den : 0.0; };
 
+            // Build ops histogram string (compact)
+            std::string opsHist;
+            for (size_t i = 0; i < t.opsHistogram.size(); ++i) {
+                if (i > 0)
+                    opsHist += ' ';
+                if (i < t.opsHistogram.size() - 1) {
+                    opsHist += fmt::format("{}={:.1f}", i, pct(t.opsHistogram[i], att));
+                } else {
+                    opsHist += fmt::format("{}+={:.1f}", i, pct(t.opsHistogram[i], att));
+                }
+            }
+
+            const double firstAfter = static_cast<double>(t.firstAfterBackoff);
             devlog::debug<grp::burst>(
                 m_logPrefix,
-                "Burst telemetry: attempts={} progress={} skipped={} avg_ops={:.3f} zero_progress={:.2f}% "
-                "unsafe_stop={:.2f}%",
-                m_burstTelemetry.attempts, m_burstTelemetry.attemptsWithProgress, m_burstTelemetry.skippedByBackoff,
-                avgOpsPerAttempt, zeroProgressPct, safeStopsPct);
+                "Burst telemetry: "
+                "att={} prog={}({:.1f}%) skip={}({:.1f}%) avg_ops={:.3f} zp={:.1f}%"
+                " | stops(%att): cb={:.1f} be={:.1f} oc={:.1f} um={:.1f} ip={:.1f}"
+                " | unsafe(%att;%um): op0ro={:.1f}({:.1f}) op0w={:.1f}({:.1f}) prog={:.1f}({:.1f})"
+                " | blk: miss={} reb={}(e={},g={},r={}) bind={}"
+                " | back: act={} first={} prog={}({:.0f}%) unsafe={}({:.0f}%)"
+                " | ops(%att): {}",
+                // Core
+                t.attempts, t.attemptsWithProgress, pct(t.attemptsWithProgress, att), t.skippedByBackoff,
+                pct(t.skippedByBackoff, att), att > 0.0 ? static_cast<double>(t.opsRetired) / att : 0.0,
+                pct(t.zeroProgressAttempts, att),
+                // Stop reasons (% of attempts)
+                pct(t.stopReasonCounts[static_cast<size_t>(BurstStopReason::CycleBudget)], att),
+                pct(t.stopReasonCounts[static_cast<size_t>(BurstStopReason::BlockEnd)], att),
+                pct(t.stopReasonCounts[static_cast<size_t>(BurstStopReason::OpCap)], att), pct(unsafeTotal, att),
+                pct(t.stopReasonCounts[static_cast<size_t>(BurstStopReason::InterruptPending)], att),
+                // Unsafe split (% of attempts; % of unsafe stops)
+                pct(t.unsafeOp0ReadOnly, att), pct(t.unsafeOp0ReadOnly, unsafeTotal), pct(t.unsafeOp0Write, att),
+                pct(t.unsafeOp0Write, unsafeTotal), pct(t.unsafeAfterProgress, att),
+                pct(t.unsafeAfterProgress, unsafeTotal),
+                // Block management
+                t.globalBlockMisses, t.rebuildsEntryMismatch + t.rebuildsGenMismatch + t.rebuildsRangeOverrun,
+                t.rebuildsEntryMismatch, t.rebuildsGenMismatch, t.rebuildsRangeOverrun, t.cursorRebinds,
+                // Backoff effectiveness
+                t.backoffActivations, t.firstAfterBackoff, t.firstAfterBackoffProgress,
+                pct(t.firstAfterBackoffProgress, firstAfter), t.firstAfterBackoffUnsafe,
+                pct(t.firstAfterBackoffUnsafe, firstAfter),
+                // Ops histogram
+                opsHist);
         }
     }
 #else
@@ -2411,6 +2465,9 @@ FORCE_INLINE SH2::BurstExecResult SH2::ExecuteCachedBurstNoSH2Cache(uint64 remai
             return result;
         }
 
+#if Ymir_SH2_BURST_TELEMETRY
+        ++m_burstTelemetry.cursorRebinds;
+#endif
         cursor.blockIndex = blockIndex;
         cursor.instructionIndex = 0;
         cursor.expectedPC = currentPC;
@@ -2431,6 +2488,16 @@ FORCE_INLINE SH2::BurstExecResult SH2::ExecuteCachedBurstNoSH2Cache(uint64 remai
          block.busPageGeneration != pageGenerations[block.startBusPage]);
     const bool needsRangeRebuild = cursor.instructionIndex >= block.instructionCount;
     if (needsEntryRebuild || needsRangeRebuild) {
+#if Ymir_SH2_BURST_TELEMETRY
+        // Track rebuild cause at call site (before building).
+        if (needsRangeRebuild) {
+            ++m_burstTelemetry.rebuildsRangeOverrun;
+        } else if (block.busPageGeneration != pageGenerations[block.startBusPage]) {
+            ++m_burstTelemetry.rebuildsGenMismatch;
+        } else {
+            ++m_burstTelemetry.rebuildsEntryMismatch;
+        }
+#endif
         BuildCachedBlock<false>(block, currentPC, currentDelaySlot);
         cursor.instructionIndex = 0;
     }
@@ -2472,7 +2539,20 @@ FORCE_INLINE SH2::BurstExecResult SH2::ExecuteCachedBurstNoSH2Cache(uint64 remai
         }
 
         const uint16 instr = currBlock.instructions[cursor.instructionIndex];
-        if (decodeTable.mem[instr].anyAccess) {
+        const auto &memAccess = decodeTable.mem[instr];
+        if (memAccess.anyAccess) {
+#if Ymir_SH2_BURST_TELEMETRY
+            // Classify unsafe stop: read-only vs write (mixed R/W counts as write).
+            if (result.opsRetired == 0) {
+                if (memAccess.first.write || memAccess.second.write) {
+                    ++m_burstTelemetry.unsafeOp0Write;
+                } else {
+                    ++m_burstTelemetry.unsafeOp0ReadOnly;
+                }
+            } else {
+                ++m_burstTelemetry.unsafeAfterProgress;
+            }
+#endif
             result.stopReason = BurstStopReason::UnsafeMemoryOp;
             break;
         }

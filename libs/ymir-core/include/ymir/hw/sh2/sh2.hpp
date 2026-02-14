@@ -975,6 +975,28 @@ private:
         uint64 fallbackCount = 0;
         uint64 skippedByBackoff = 0;
         std::array<uint64, kBurstStopReasonCount> stopReasonCounts{};
+
+        // P9.2b: Unsafe-op split (classified at stop point)
+        uint64 unsafeOp0ReadOnly = 0;   // Read-only on first instruction
+        uint64 unsafeOp0Write = 0;      // Has write on first instruction (includes mixed R/W)
+        uint64 unsafeAfterProgress = 0; // Unsafe after retiring >=1 ops
+
+        // P9.2b: Block management
+        uint64 globalBlockMisses = 0;     // New block allocated (all paths, not burst-scoped)
+        uint64 rebuildsEntryMismatch = 0; // PC or delay-slot mismatch
+        uint64 rebuildsGenMismatch = 0;   // Page generation stale
+        uint64 rebuildsRangeOverrun = 0;  // Cursor past block end
+        uint64 cursorRebinds = 0;         // Cursor invalidated, had to rebind
+
+        // P9.2b: Backoff effectiveness (first attempt after skip streak only)
+        uint64 backoffActivations = 0;
+        uint64 firstAfterBackoff = 0;
+        uint64 firstAfterBackoffProgress = 0;
+        uint64 firstAfterBackoffUnsafe = 0;
+
+        // P9.2b: Ops-per-burst histogram [0..kCachedBurstMaxOpsP91]
+        std::array<uint64, kCachedBurstMaxOpsP91 + 1> opsHistogram{};
+
         uint64 nextReportAttempt = kBurstTelemetryReportInterval;
     };
 
@@ -991,6 +1013,7 @@ private:
     std::array<uint32, kCachedBlockPageCount> m_cachedBlockPageGenerations{};
     uint8 m_burstUnsafeOp0Streak = 0;
     uint8 m_burstBackoffCountdown = 0;
+    bool m_burstFirstAfterBackoff = false; // Set when backoff expires; consumed by first burst attempt
     BurstTelemetryCounters m_burstTelemetry{};
 
     void ClearCachedBlocks();
