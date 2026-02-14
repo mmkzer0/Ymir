@@ -963,6 +963,21 @@ private:
         bool madeProgress = false;
     };
 
+    static constexpr size_t kBurstStopReasonCount = static_cast<size_t>(BurstStopReason::Fallback) + 1u;
+    static constexpr uint64 kBurstTelemetryReportInterval = 16'384;
+
+    struct BurstTelemetryCounters {
+        uint64 attempts = 0;
+        uint64 attemptsWithProgress = 0;
+        uint64 opsRetired = 0;
+        uint64 cyclesRetired = 0;
+        uint64 zeroProgressAttempts = 0;
+        uint64 fallbackCount = 0;
+        uint64 skippedByBackoff = 0;
+        std::array<uint64, kBurstStopReasonCount> stopReasonCounts{};
+        uint64 nextReportAttempt = kBurstTelemetryReportInterval;
+    };
+
     // Bucket index format: (busPage << 1) | delaySlotBit
     std::array<sint32, kCachedBlockPageCount * 2> m_cachedBlockBucketHeads{};
     // Lookup buckets are allocated from VM-backed chunks and recycled across PurgeBlockCache/ClearCachedBlocks calls.
@@ -974,6 +989,9 @@ private:
     std::vector<CachedBlock> m_cachedBlocks;
     CachedBlockCursor m_cachedBlockCursor;
     std::array<uint32, kCachedBlockPageCount> m_cachedBlockPageGenerations{};
+    uint8 m_burstUnsafeOp0Streak = 0;
+    uint8 m_burstBackoffCountdown = 0;
+    BurstTelemetryCounters m_burstTelemetry{};
 
     void ClearCachedBlocks();
     FORCE_INLINE uint32 GetCachedBlockPage(uint32 pc) const;
@@ -990,6 +1008,10 @@ private:
     // Executes a conservative cached burst with SH-2 cache emulation disabled.
     // Used by Advance() when debug tracing is off and cached interpreter burst mode is enabled.
     FORCE_INLINE BurstExecResult ExecuteCachedBurstNoSH2Cache(uint64 remainingCycles);
+    FORCE_INLINE bool ConsumeBurstBackoffCountdown();
+    FORCE_INLINE void UpdateBurstBackoff(const BurstExecResult &result);
+    FORCE_INLINE void RecordBurstTelemetry(const BurstExecResult &result);
+    FORCE_INLINE void RecordBurstBackoffSkip();
 
     // -------------------------------------------------------------------------
     // Debugger
