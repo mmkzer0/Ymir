@@ -97,6 +97,13 @@ namespace grp {
         // static constexpr bool enabled = true;
     };
 
+    struct burst : public base {
+        // static constexpr bool enabled = true;
+        static constexpr std::string Name(std::string_view prefix) {
+            return std::string(prefix) + "-Burst";
+        }
+    };
+
 } // namespace grp
 
 // -----------------------------------------------------------------------------
@@ -294,6 +301,9 @@ void SH2::Reset(bool hard, bool watchdogInitiated) {
 
     m_cache.Reset();
     ClearCachedBlocks();
+#if Ymir_SH2_BURST_TELEMETRY
+    m_burstTelemetry = {};
+#endif
 }
 
 void SH2::MapMemory(sys::SH2Bus &bus) {
@@ -363,10 +373,20 @@ FLATTEN uint64 SH2::Advance(uint64 cycles, uint64 spilloverCycles) {
         bool madeProgress = false;
         if constexpr (!debug && enableBlockCache && !enableSH2Cache) {
             if (m_systemFeatures.enableBlockBurst) {
-                const uint64 cyclesBeforeBurst = cyclesExecuted;
-                const BurstExecResult burst = ExecuteCachedBurstNoSH2Cache(cycles - cyclesExecuted);
-                madeProgress = burst.madeProgress;
-                YMIR_DEV_ASSERT(!madeProgress || (cyclesExecuted - cyclesBeforeBurst) == burst.cyclesRetired);
+                if (ConsumeBurstBackoffCountdown()) {
+#if Ymir_SH2_BURST_TELEMETRY
+                    RecordBurstBackoffSkip();
+#endif
+                } else {
+                    const uint64 cyclesBeforeBurst = cyclesExecuted;
+                    const BurstExecResult burst = ExecuteCachedBurstNoSH2Cache(cycles - cyclesExecuted);
+                    madeProgress = burst.madeProgress;
+                    YMIR_DEV_ASSERT(!madeProgress || (cyclesExecuted - cyclesBeforeBurst) == burst.cyclesRetired);
+#if Ymir_SH2_BURST_TELEMETRY
+                    RecordBurstTelemetry(burst);
+#endif
+                    UpdateBurstBackoff(burst);
+                }
             }
         }
 
@@ -622,6 +642,8 @@ void SH2::ClearCachedBlocks() {
     m_cachedBlocks.clear();
     m_cachedBlockCursor = {};
     m_cachedBlockPageGenerations.fill(0);
+    m_burstUnsafeOp0Streak = 0;
+    m_burstBackoffCountdown = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -2278,6 +2300,88 @@ FORCE_INLINE uint64 SH2::DispatchOpcode(OpcodeType opcode, const DecodedArgs &ar
 
 // -----------------------------------------------------------------------------
 // Instruction interpreters
+
+FORCE_INLINE bool SH2::ConsumeBurstBackoffCountdown() {
+    if (m_burstBackoffCountdown == 0) {
+        return false;
+    }
+    --m_burstBackoffCountdown;
+    return true;
+}
+
+FORCE_INLINE void SH2::UpdateBurstBackoff(const BurstExecResult &result) {
+    if (result.madeProgress) {
+        m_burstUnsafeOp0Streak = 0;
+        m_burstBackoffCountdown = 0;
+        return;
+    }
+
+    if (result.stopReason == BurstStopReason::UnsafeMemoryOp && result.opsRetired == 0) {
+        static constexpr std::array<uint8, 5> kBackoffSteps = {1, 2, 4, 8, 16};
+        if (m_burstUnsafeOp0Streak < kBackoffSteps.size()) {
+            ++m_burstUnsafeOp0Streak;
+        }
+        const size_t backoffIndex = std::min<size_t>(m_burstUnsafeOp0Streak - 1, kBackoffSteps.size() - 1);
+        m_burstBackoffCountdown = kBackoffSteps[backoffIndex];
+        return;
+    }
+
+    m_burstUnsafeOp0Streak = 0;
+    m_burstBackoffCountdown = 0;
+}
+
+FORCE_INLINE void SH2::RecordBurstTelemetry(const BurstExecResult &result) {
+#if Ymir_SH2_BURST_TELEMETRY
+    ++m_burstTelemetry.attempts;
+    if (result.madeProgress) {
+        ++m_burstTelemetry.attemptsWithProgress;
+    } else {
+        ++m_burstTelemetry.zeroProgressAttempts;
+    }
+    if (result.stopReason == BurstStopReason::Fallback) {
+        ++m_burstTelemetry.fallbackCount;
+    }
+    m_burstTelemetry.opsRetired += result.opsRetired;
+    m_burstTelemetry.cyclesRetired += result.cyclesRetired;
+
+    const size_t stopReasonIndex = static_cast<size_t>(result.stopReason);
+    YMIR_DEV_ASSERT(stopReasonIndex < m_burstTelemetry.stopReasonCounts.size());
+    ++m_burstTelemetry.stopReasonCounts[stopReasonIndex];
+
+    if (m_burstTelemetry.attempts >= m_burstTelemetry.nextReportAttempt) {
+        m_burstTelemetry.nextReportAttempt += kBurstTelemetryReportInterval;
+        if constexpr (devlog::debug_enabled<grp::burst>) {
+            const double attempts = static_cast<double>(m_burstTelemetry.attempts);
+            const double avgOpsPerAttempt =
+                attempts > 0.0 ? static_cast<double>(m_burstTelemetry.opsRetired) / attempts : 0.0;
+            const double zeroProgressPct =
+                attempts > 0.0 ? (static_cast<double>(m_burstTelemetry.zeroProgressAttempts) * 100.0) / attempts : 0.0;
+            const double safeStopsPct =
+                attempts > 0.0
+                    ? (static_cast<double>(
+                           m_burstTelemetry.stopReasonCounts[static_cast<size_t>(BurstStopReason::UnsafeMemoryOp)]) *
+                       100.0) /
+                          attempts
+                    : 0.0;
+
+            devlog::debug<grp::burst>(
+                m_logPrefix,
+                "Burst telemetry: attempts={} progress={} skipped={} avg_ops={:.3f} zero_progress={:.2f}% "
+                "unsafe_stop={:.2f}%",
+                m_burstTelemetry.attempts, m_burstTelemetry.attemptsWithProgress, m_burstTelemetry.skippedByBackoff,
+                avgOpsPerAttempt, zeroProgressPct, safeStopsPct);
+        }
+    }
+#else
+    (void)result;
+#endif
+}
+
+FORCE_INLINE void SH2::RecordBurstBackoffSkip() {
+#if Ymir_SH2_BURST_TELEMETRY
+    ++m_burstTelemetry.skippedByBackoff;
+#endif
+}
 
 FORCE_INLINE SH2::BurstExecResult SH2::ExecuteCachedBurstNoSH2Cache(uint64 remainingCycles) {
     BurstExecResult result{};

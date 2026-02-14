@@ -404,6 +404,7 @@ target_compile_definitions(ymir-core PUBLIC "Ymir_ENABLE_DEVLOG=$<BOOL:${Ymir_EN
 target_compile_definitions(ymir-core PUBLIC "Ymir_DEV_ASSERTIONS=$<BOOL:${Ymir_ENABLE_DEV_ASSERTIONS}>")
 target_compile_definitions(ymir-core PUBLIC "Ymir_DEV_BUILD=$<BOOL:${Ymir_DEV_BUILD}>")
 target_compile_definitions(ymir-core PUBLIC "Ymir_EXTRA_INLINING=$<BOOL:${Ymir_EXTRA_INLINING}>")
+target_compile_definitions(ymir-core PUBLIC "Ymir_SH2_BURST_TELEMETRY=$<BOOL:${Ymir_SH2_BURST_TELEMETRY}>")
 target_compile_definitions(ymir-core PUBLIC "TOML_EXCEPTIONS=0")
 if (Ymir_SH2_DISPATCH_BACKEND_UPPER STREQUAL "SWITCH")
     target_compile_definitions(ymir-core PRIVATE Ymir_SH2_DISPATCH_BACKEND_SWITCH=1)

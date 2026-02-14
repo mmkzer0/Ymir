@@ -18,6 +18,7 @@ inline constexpr uint16 instrMOVI_R0_4 = 0xE004;
 inline constexpr uint16 instrMOVI_R1_2 = 0xE102;
 inline constexpr uint16 instrMOVI_R2_3 = 0xE203;
 inline constexpr uint16 instrMOVI_R3_4 = 0xE304;
+inline constexpr uint16 instrMOVL_ATR0_R0 = 0x6002;
 inline constexpr uint16 instrMOVI_R0_7F = 0xE07F;
 inline constexpr uint32 kProgramStart = 0x0000'1000;
 inline constexpr uint32 kProgramLength = 32;
@@ -668,6 +669,31 @@ TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst register-only execution mat
     CHECK(probe.R(1) == reference.probe.R(1));
     CHECK(probe.R(2) == reference.probe.R(2));
     CHECK(probe.R(3) == reference.probe.R(3));
+}
+
+TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst unsafe-op fallback keeps forward progress and parity",
+                             "[sh2][block-cache][burst]") {
+    TestSubject reference{};
+
+    auto setupProgram = [](const TestSubject &subject) {
+        subject.ResetState();
+        subject.SetInstructionSpan(kProgramStart, instrMOVL_ATR0_R0, kProgramLength);
+        subject.probe.PC() = kProgramStart;
+    };
+
+    setupProgram(*this);
+    SetBurstEnabled(true);
+    setupProgram(reference);
+
+    uint64 referenceCycles = 0;
+    for (uint32 i = 0; i < 8; ++i) {
+        referenceCycles += reference.RunStep<false, false, true>();
+    }
+
+    RunAdvance<false, false, true>(referenceCycles);
+
+    CHECK(probe.PC() == reference.probe.PC());
+    CHECK(probe.R(0) == reference.probe.R(0));
 }
 
 TEST_CASE_PERSISTENT_FIXTURE(TestSubject, "SH2 burst stops correctly at barriers and matches step reference",
