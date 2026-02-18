@@ -2540,15 +2540,12 @@ FORCE_INLINE SH2::BurstExecResult SH2::ExecuteCachedBurstNoSH2Cache(uint64 remai
 
         const uint16 instr = currBlock.instructions[cursor.instructionIndex];
         const auto &memAccess = decodeTable.mem[instr];
-        if (memAccess.anyAccess) {
+        // OPT-1: Allow read-only memory ops in burst; stop only on writes (or mixed R/W).
+        // Reads don't mutate state, so they're safe to retire within the burst window.
+        if (memAccess.anyAccess && (memAccess.first.write || memAccess.second.write)) {
 #if Ymir_SH2_BURST_TELEMETRY
-            // Classify unsafe stop: read-only vs write (mixed R/W counts as write).
             if (result.opsRetired == 0) {
-                if (memAccess.first.write || memAccess.second.write) {
-                    ++m_burstTelemetry.unsafeOp0Write;
-                } else {
-                    ++m_burstTelemetry.unsafeOp0ReadOnly;
-                }
+                ++m_burstTelemetry.unsafeOp0Write;
             } else {
                 ++m_burstTelemetry.unsafeAfterProgress;
             }
