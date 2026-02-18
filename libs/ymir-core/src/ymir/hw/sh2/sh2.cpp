@@ -1357,7 +1357,7 @@ template <mem_primitive T, bool poke, bool debug, bool enableSH2Cache>
 }
 
 template <bool poke, bool debug, bool enableSH2Cache>
-FORCE_INLINE void SH2::OnChipRegWriteByte(uint32 address, uint8 value) {
+FORCE_INLINE_EX void SH2::OnChipRegWriteByte(uint32 address, uint8 value) {
     if (address >= 0x100) {
         if constexpr (poke) {
             uint16 currValue = OnChipRegReadWord<true>(address & ~1);
@@ -1528,7 +1528,7 @@ FORCE_INLINE void SH2::OnChipRegWriteByte(uint32 address, uint8 value) {
 }
 
 template <bool poke, bool debug, bool enableSH2Cache>
-FORCE_INLINE void SH2::OnChipRegWriteWord(uint32 address, uint16 value) {
+FORCE_INLINE_EX void SH2::OnChipRegWriteWord(uint32 address, uint16 value) {
     switch (address) {
     case 0x60:
     case 0x61:
@@ -1630,7 +1630,7 @@ FORCE_INLINE void SH2::OnChipRegWriteWord(uint32 address, uint16 value) {
 }
 
 template <bool poke, bool debug, bool enableSH2Cache>
-FORCE_INLINE void SH2::OnChipRegWriteLong(uint32 address, uint32 value) {
+FORCE_INLINE_EX void SH2::OnChipRegWriteLong(uint32 address, uint32 value) {
     if (address < 0x100) {
         if constexpr (poke) {
             OnChipRegWriteWord<true, debug, enableSH2Cache>(address + 0, value >> 16u);
