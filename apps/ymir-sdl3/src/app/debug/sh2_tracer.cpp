@@ -1,23 +1,11 @@
 #include "sh2_tracer.hpp"
 
 #include <ymir/hw/sh2/sh2.hpp>
-#include <ymir/core/types.hpp>
+#include <ymir/hw/sh2/sh2_disasm.hpp>
 
 using namespace ymir;
 
 namespace app {
-
-namespace {
-
-FORCE_INLINE sint32 SignExtend12(uint16 value) {
-    return static_cast<sint32>(static_cast<sint16>((value & 0x0FFF) << 4)) >> 4;
-}
-
-FORCE_INLINE sint32 SignExtend8(uint8 value) {
-    return static_cast<sint32>(static_cast<sint8>(value));
-}
-
-} // namespace
 
 const char *SH2Tracer::TraceEventMnemonic(TraceEventType type) {
     switch (type) {
@@ -75,14 +63,14 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
         return;
     }
 
-    // start flow/stack/execution trace logic 
+    // start flow/stack/execution trace logic
     TraceEventType type{};
     uint32 target = 0;
     bool targetValid = false;
-    uint32 spAfter = 0;
+    std::optional<uint32> spAfter{};
 
     // opcode was no enumerated barrier -> return early
-    if (!ClassifyFlowEvent(pc, opcode, type, target, targetValid, spAfter)) {
+    if (!ClassifyFlowEvent(pc, opcode, delaySlot, type, target, targetValid, spAfter)) {
         return;
     }
 
@@ -111,7 +99,7 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
     }
 
     // set sp after instruction
-    evt.spAfter = spAfter != 0 ? spAfter : evt.spBefore;
+    evt.spAfter = spAfter.value_or(evt.spBefore);
 
     // forward event to ring buffer
     traceEvents.Write(evt);
@@ -245,158 +233,155 @@ void SH2Tracer::DMAXferEnd(uint32 channel, bool irqRaised) {
     }
 }
 
-// map instructions to barrier type enumeration
-// type, target, targetValid and spAfter get called by value for modification
-// returns a bool so path in ExecuteInstruction() only gets taken if barrier event
-// TODO: check again for correctness -> sh2 programming manual
-bool SH2Tracer::ClassifyFlowEvent(uint32 pc, uint16 opcode, TraceEventType &type, uint32 &target, bool &targetValid,
-                                  uint32 &spAfter) const {
-    // dest/src operand for register ops
-    const uint8 n = (opcode >> 8) & 0xF;
-    const uint8 m = (opcode >> 8) & 0xF;
+bool SH2Tracer::ClassifyFlowEvent(uint32 pc, uint16 opcode, bool delaySlot, TraceEventType &type, uint32 &target,
+                                  bool &targetValid, std::optional<uint32> &spAfter) const {
+    const auto &instr = sh2::Disassemble(opcode);
 
-    // --- Calls ---
-    if ((opcode & 0xF000) == 0xB000) { // BSR disp12
-        // Branch to Subroutine
-        // Delayed branch: PC → PR, disp × 2 + PC → PC
-        // "The 12-bit displacement is sign-extended and doubled"
-        const sint32 disp = SignExtend12(opcode) << 1;      // disp = dispatch * 2
-        // PC = PC + (disp<<1) + 4 
-        target = pc + 4 + disp;
-        targetValid = true;
-        type = TraceEventType::Call;
-        return true;
-    }
-    if ((opcode & 0xF0FF) == 0x0003) { // BSRF Rm
-        // Branch to Subroutine Far
-        // Delayed branch: PC → PR, Rm + PC → PC
-        targetValid = m_probe != nullptr;
-        target = targetValid ? ( m_probe->R(m) + pc ) : 0;
-        type = TraceEventType::Call;
-        return true;
-    }
-    if ((opcode & 0xF0FF) == 0x400B) { // JSR @Rm
-        // Jump to Subroutine
-        // Delayed branch, PC → PR, Rm → PC
-        targetValid = m_probe != nullptr;
-        // PC = R[m] + 4;
-        target = targetValid ? (m_probe->R(m) + 4) : 0;
-        type = TraceEventType::Call;
-        return true;
-    }
-
-    // --- Returns ---
-    if (opcode == 0x000B) { // RTS
-        // Return from Subroutine
-        // Delayed branch: PR → PC 
-        // PC = PR + 4
-        type = TraceEventType::Return;
-        // TODO: set proper return target
-        target = ( m_probe->PR() );         // make return target visible
-        return true;
-    }
-    if (opcode == 0x002B) { // RTE
-        // Return from Exception
-        // Delayed branch: stack area → PC/SR
-        type = TraceEventType::ReturnFromException;
-        return true;
-    }
-
-    // --- Trap ---
-    if ((opcode & 0xFF00) == 0xC300) { // TRAPA #imm
-        // Trap Always
-        // PC/SR → stack area, (imm × 4 + VBR) → PC
-        const uint32 imm = opcode & 0xFF;
-        targetValid = m_probe != nullptr;
-        if (targetValid) {
-            // PC = Read_Long(VBR + (imm<<2)) + 4
-            target = m_probe->VBR() + (imm << 2) + 4;
-        }
-        type = TraceEventType::Trap;
-        // R[15] -= 4 twice (SR and PC-2 on stack)
-        spAfter -= 8;
-        return true;
-    }
-
-    // --- Branches ---
-    if ((opcode & 0xF000) == 0xA000) { // BRA disp12
-        // Branch
-        // Delayed branch: disp × 2 + PC → PC
-        // "The 12-bit displacement is sign-extended and doubled"
-        const sint32 disp = SignExtend12(opcode) << 1;      // disp = dispatch * 2
-        // PC = PC + (disp<<1) + 4;
-        target = pc + 4 + disp;
-        targetValid = true;
-        type = TraceEventType::Branch;
-        return true;
-    }
-    if ((opcode & 0xF0FF) == 0x0023) { // BRAF Rm
-        // Delayed branch, Rm + PC → PC 
-        targetValid = m_probe != nullptr;
-        target = targetValid ? m_probe->R(m) : 0;
-        type = TraceEventType::Branch;
-        return true;
-    }
-    if ((opcode & 0xFF00) == 0x8900 || (opcode & 0xFF00) == 0x8D00 || // BT/BTS
-        (opcode & 0xFF00) == 0x8B00 || (opcode & 0xFF00) == 0x8F00) { // BF/BFS
-        // BT:      If T = 1, disp × 2 + PC → PC; if T = 0, nop (where label is disp + PC)
-        // BT/S:    Delayed branch, if T = 1, disp × 2 + PC → PC; if T = 0, nop
-        // BF:      If T = 0, disp × 2 + PC → PC; if T = 1, nop (where label is disp × 2 + PC)
-        // BF/S:    Delayed branch, if T = 0, disp × 2 + PC → PC; if T = 1, nop
-        bool taken = false;
-        if (m_probe != nullptr) {
-            const bool T = m_probe->SR().T;
-            const bool isBT = (opcode & 0x0100) == 0x0100;  // BT/BTS set bit 8 = 1?
-            const bool isBF = !isBT;
-            taken = (isBT && T) || (isBF && !T);
-        }
-        if (taken || m_probe == nullptr) {
-            const sint32 disp = SignExtend8(static_cast<uint8>(opcode & 0xFF)) << 1;
-            target = pc + 4 + disp;
-            targetValid = true;
-            type = TraceEventType::Branch;
-            return true;
-        }
+    // Keep trace output aligned with actual execution semantics.
+    if (delaySlot && !instr.validInDelaySlot) {
         return false;
     }
 
-    // --- Jump ---
-    if ((opcode & 0xF0FF) == 0x402B) { // JMP @Rm
-        targetValid = m_probe != nullptr;
-        target = targetValid ? m_probe->R(m) : 0;
+    auto setDispPCTarget = [&](const sh2::Operand &operand) {
+        if (operand.type != sh2::Operand::Type::DispPC) {
+            return false;
+        }
+        target = pc + static_cast<uint32>(operand.immDisp);
+        targetValid = true;
+        return true;
+    };
+
+    auto setRegisterTarget = [&](uint8 reg, uint32 bias) {
+        if (m_probe == nullptr) {
+            return false;
+        }
+        target = m_probe->R(reg) + bias;
+        targetValid = true;
+        return true;
+    };
+
+    switch (instr.mnemonic) {
+    case sh2::Mnemonic::BSR:
+        type = TraceEventType::Call;
+        setDispPCTarget(instr.op1);
+        return true;
+
+    case sh2::Mnemonic::BSRF:
+        type = TraceEventType::Call;
+        if (instr.op1.type == sh2::Operand::Type::RnPC) {
+            setRegisterTarget(instr.op1.reg, pc + 4);
+        }
+        return true;
+
+    case sh2::Mnemonic::JSR:
+        type = TraceEventType::Call;
+        if (instr.op1.type == sh2::Operand::Type::AtRnPC) {
+            setRegisterTarget(instr.op1.reg, 0);
+        }
+        return true;
+
+    case sh2::Mnemonic::RTS:
+        type = TraceEventType::Return;
+        if (m_probe != nullptr) {
+            target = m_probe->PR();
+            targetValid = true;
+        }
+        return true;
+
+    case sh2::Mnemonic::RTE:
+        type = TraceEventType::ReturnFromException;
+        if (m_probe != nullptr) {
+            const uint32 stackPointer = m_probe->R(15);
+            target = m_probe->MemPeekLong(stackPointer, false);
+            targetValid = true;
+            spAfter = stackPointer + 8;
+        }
+        return true;
+
+    case sh2::Mnemonic::TRAPA:
+        type = TraceEventType::Trap;
+        if (m_probe != nullptr && instr.op1.type == sh2::Operand::Type::Imm) {
+            const uint32 stackPointer = m_probe->R(15);
+            const uint32 vectorAddress = m_probe->VBR() + static_cast<uint32>(instr.op1.immDisp);
+            target = m_probe->MemPeekLong(vectorAddress, false);
+            targetValid = true;
+            spAfter = stackPointer - 8;
+        }
+        return true;
+
+    case sh2::Mnemonic::BRA:
+        type = TraceEventType::Branch;
+        setDispPCTarget(instr.op1);
+        return true;
+
+    case sh2::Mnemonic::BRAF:
+        type = TraceEventType::Branch;
+        if (instr.op1.type == sh2::Operand::Type::RnPC) {
+            setRegisterTarget(instr.op1.reg, pc + 4);
+        }
+        return true;
+
+    case sh2::Mnemonic::BT:
+    case sh2::Mnemonic::BTS:
+    case sh2::Mnemonic::BF:
+    case sh2::Mnemonic::BFS: {
+        if (m_probe == nullptr) {
+            return false;
+        }
+        const bool testTrue = instr.mnemonic == sh2::Mnemonic::BT || instr.mnemonic == sh2::Mnemonic::BTS;
+        const bool taken = testTrue ? m_probe->SR().T : !m_probe->SR().T;
+        if (!taken) {
+            return false;
+        }
+        type = TraceEventType::Branch;
+        setDispPCTarget(instr.op1);
+        return true;
+    }
+
+    case sh2::Mnemonic::JMP:
         type = TraceEventType::Jump;
-        return true;
-    }
-
-    // --- Stack push/pop (mov.l) ---
-    if ((opcode & 0xF00F) == 0x2006 && n == 0xF) { // mov.l Rm, @-R15
-        type = TraceEventType::StackPush;
-        if (m_probe != nullptr) {
-            spAfter = m_probe->R(15) - 4;
+        if (instr.op1.type == sh2::Operand::Type::AtRnPC) {
+            setRegisterTarget(instr.op1.reg, 0);
         }
         return true;
-    }
-    if ((opcode & 0xF00F) == 0x6006 && m == 0xF) { // mov.l @R15+, Rn
-        type = TraceEventType::StackPop;
-        if (m_probe != nullptr) {
-            spAfter = m_probe->R(15) + 4;
-        }
-        return true;
-    }
 
-    // --- Stack adjust (add #imm, R15) ---
-    if ((opcode & 0xF000) == 0x7000 && n == 0xF) {
-        const sint32 delta = SignExtend8(static_cast<uint8>(opcode & 0xFF));
-        if (delta != 0) {
-            type = delta > 0 ? TraceEventType::StackPop : TraceEventType::StackPush;
+    case sh2::Mnemonic::MOV:
+        if (instr.opSize == sh2::OperandSize::Long && instr.op2.type == sh2::Operand::Type::AtMinusRn &&
+            instr.op2.reg == 15) {
+            type = TraceEventType::StackPush;
             if (m_probe != nullptr) {
-                spAfter = static_cast<uint32>(m_probe->R(15) + delta);
+                spAfter = m_probe->R(15) - 4;
             }
             return true;
         }
-    }
+        if (instr.opSize == sh2::OperandSize::Long && instr.op1.type == sh2::Operand::Type::AtRnPlus &&
+            instr.op1.reg == 15) {
+            type = TraceEventType::StackPop;
+            if (m_probe != nullptr) {
+                spAfter = m_probe->R(15) + 4;
+            }
+            return true;
+        }
+        return false;
 
-    return false;
+    case sh2::Mnemonic::ADD:
+        if (instr.op1.type == sh2::Operand::Type::Imm && instr.op2.type == sh2::Operand::Type::Rn &&
+            instr.op2.reg == 15) {
+            const sint32 delta = instr.op1.immDisp;
+            if (delta == 0) {
+                return false;
+            }
+            type = delta > 0 ? TraceEventType::StackPop : TraceEventType::StackPush;
+            if (m_probe != nullptr) {
+                const sint64 nextSp = static_cast<sint64>(m_probe->R(15)) + static_cast<sint64>(delta);
+                spAfter = static_cast<uint32>(nextSp);
+            }
+            return true;
+        }
+        return false;
+
+    default: return false;
+    }
 }
 
 } // namespace app
