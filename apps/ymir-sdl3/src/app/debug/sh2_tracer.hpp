@@ -6,6 +6,7 @@
 #include <util/ring_buffer.hpp>
 
 #include <array>
+#include <optional>
 
 namespace app {
 
@@ -15,7 +16,7 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
     void ResetDMACounter(uint32 channel);
     void SetTraceFlowStack(bool enable);
 
-    bool traceInstructions = false; 
+    bool traceInstructions = false;
     bool traceInterrupts = false;
     bool traceExceptions = false;
     bool traceDivisions = false;
@@ -150,8 +151,8 @@ private:
     uint32 m_divisionCounter = 0;
     std::array<uint32, 2> m_dmaCounter = {0, 0};
 
-    bool ClassifyFlowEvent(uint32 pc, uint16 opcode, TraceEventType &type, uint32 &target, bool &targetValid,
-                           uint32 &spAfter) const;
+    bool ClassifyFlowEvent(uint32 pc, uint16 opcode, bool delaySlot, TraceEventType &type, uint32 &target,
+                           bool &targetValid, std::optional<uint32> &spAfter) const;
 
     // -------------------------------------------------------------------------
     // ISH2Tracer implementation
