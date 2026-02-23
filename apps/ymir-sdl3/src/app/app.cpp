@@ -3138,8 +3138,8 @@ void App::RunEmulator() {
                     const bool flowStackTraceChanged =
                         ImGui::MenuItem("Enable flow/stack trace", nullptr, &flowStackTrace);
                     if (ImGui::BeginItemTooltip()) {
-                        ImGui::TextUnformatted(
-                            "Heavy SH2 control-flow/stack tracing; expect performance impact.\nEnables other SH2 traces.");
+                        ImGui::TextUnformatted("Heavy SH2 control-flow/stack tracing; expect performance "
+                                               "impact.\nEnables other SH2 traces.");
                         ImGui::EndTooltip();
                     }
                     if (flowStackTraceChanged) {
@@ -3291,7 +3291,7 @@ void App::RunEmulator() {
                 ImGui::ShowDemoWindow(&showImGuiDemoWindow);
             }
 #endif
-            // TODO: remove in favor of proper debug window 
+            // TODO: remove in favor of proper debug window
             // e.g. under apps/ymir-sdl3/src/app/ui/windows/debug/
             // temporary execution trace ui window
             if (g_showFlowStackTrace) {
@@ -3307,16 +3307,20 @@ void App::RunEmulator() {
                         }
 
                         const size_t rows = count < 256 ? count : 256;
-                        if (ImGui::BeginTable(title, 7, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                                           ImGuiTableFlags_SizingStretchProp |
-                                                           ImGuiTableFlags_Resizable)) {
+                        if (ImGui::BeginTable(title, 11,
+                                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
+                                                  ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
                             ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 50.0f);
+                            ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, 70.0f);
                             ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
                             ImGui::TableSetupColumn("PC", ImGuiTableColumnFlags_WidthFixed, 120.0f);
                             ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, 120.0f);
                             ImGui::TableSetupColumn("SP before", ImGuiTableColumnFlags_WidthFixed, 110.0f);
                             ImGui::TableSetupColumn("SP after", ImGuiTableColumnFlags_WidthFixed, 110.0f);
                             ImGui::TableSetupColumn("Delay", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                            ImGui::TableSetupColumn("Has DS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                            ImGui::TableSetupColumn("Cond", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                            ImGui::TableSetupColumn("Taken", ImGuiTableColumnFlags_WidthFixed, 60.0f);
                             ImGui::TableHeadersRow();
 
                             for (size_t i = 0; i < rows; ++i) {
@@ -3325,6 +3329,9 @@ void App::RunEmulator() {
 
                                 ImGui::TableNextColumn();
                                 ImGui::Text("%llu", static_cast<unsigned long long>(evt.counter));
+
+                                ImGui::TableNextColumn();
+                                ImGui::Text("%llu", static_cast<unsigned long long>(evt.sequenceId));
 
                                 ImGui::TableNextColumn();
                                 ImGui::TextUnformatted(app::SH2Tracer::TraceEventMnemonic(evt.type));
@@ -3347,6 +3354,19 @@ void App::RunEmulator() {
 
                                 ImGui::TableNextColumn();
                                 ImGui::TextUnformatted(evt.delaySlot ? "Yes" : "No");
+
+                                ImGui::TableNextColumn();
+                                ImGui::TextUnformatted(evt.hasDelaySlot ? "Yes" : "No");
+
+                                ImGui::TableNextColumn();
+                                ImGui::TextUnformatted(evt.isConditionalBranch ? "Yes" : "No");
+
+                                ImGui::TableNextColumn();
+                                if (evt.isConditionalBranch) {
+                                    ImGui::TextUnformatted(evt.branchTaken ? "Yes" : "No");
+                                } else {
+                                    ImGui::TextUnformatted("-");
+                                }
                             }
 
                             ImGui::EndTable();
