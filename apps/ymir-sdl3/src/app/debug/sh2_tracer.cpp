@@ -53,9 +53,15 @@ void SH2Tracer::SetTraceFlowStack(bool enable) {
 }
 
 void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
+    if (!traceInstructions && !traceFlowStack) {
+        return;
+    }
+
+    const uint64 sequenceId = m_instructionSequenceCounter++;
+
     // execute write if tracing enabled
     if (traceInstructions) {
-        instructions.Write({pc, opcode, delaySlot});
+        instructions.Write({pc, opcode, delaySlot, sequenceId});
     }
 
     // if no exec trace, return as usual
@@ -63,14 +69,19 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
         return;
     }
 
+    const auto &instr = sh2::Disassemble(opcode);
+
     // start flow/stack/execution trace logic
     TraceEventType type{};
     uint32 target = 0;
     bool targetValid = false;
     std::optional<uint32> spAfter{};
+    bool isConditionalBranch = false;
+    bool branchTaken = false;
 
     // opcode was no enumerated barrier -> return early
-    if (!ClassifyFlowEvent(pc, opcode, delaySlot, type, target, targetValid, spAfter)) {
+    if (!ClassifyFlowEvent(pc, instr, delaySlot, type, target, targetValid, spAfter, isConditionalBranch,
+                           branchTaken)) {
         return;
     }
 
@@ -81,7 +92,11 @@ void SH2Tracer::ExecuteInstruction(uint32 pc, uint16 opcode, bool delaySlot) {
     evt.target = target;
     evt.targetValid = targetValid;
     evt.delaySlot = delaySlot;
+    evt.hasDelaySlot = instr.hasDelaySlot;
+    evt.isConditionalBranch = isConditionalBranch;
+    evt.branchTaken = branchTaken;
     evt.opcode = opcode;
+    evt.sequenceId = sequenceId;
     evt.counter = m_traceEventCounter++;
 
     // ensure probe is not null
@@ -233,14 +248,17 @@ void SH2Tracer::DMAXferEnd(uint32 channel, bool irqRaised) {
     }
 }
 
-bool SH2Tracer::ClassifyFlowEvent(uint32 pc, uint16 opcode, bool delaySlot, TraceEventType &type, uint32 &target,
-                                  bool &targetValid, std::optional<uint32> &spAfter) const {
-    const auto &instr = sh2::Disassemble(opcode);
-
+bool SH2Tracer::ClassifyFlowEvent(uint32 pc, const sh2::DisassembledInstruction &instr, bool delaySlot,
+                                  TraceEventType &type, uint32 &target, bool &targetValid,
+                                  std::optional<uint32> &spAfter, bool &isConditionalBranch, bool &branchTaken) const {
+    // TODO(test): add coverage for delay-slot metadata, conditional branch outcomes, and sequence correlation.
     // Keep trace output aligned with actual execution semantics.
     if (delaySlot && !instr.validInDelaySlot) {
         return false;
     }
+
+    isConditionalBranch = false;
+    branchTaken = false;
 
     auto setDispPCTarget = [&](const sh2::Operand &operand) {
         if (operand.type != sh2::Operand::Type::DispPC) {
@@ -325,13 +343,10 @@ bool SH2Tracer::ClassifyFlowEvent(uint32 pc, uint16 opcode, bool delaySlot, Trac
     case sh2::Mnemonic::BTS:
     case sh2::Mnemonic::BF:
     case sh2::Mnemonic::BFS: {
-        if (m_probe == nullptr) {
-            return false;
-        }
-        const bool testTrue = instr.mnemonic == sh2::Mnemonic::BT || instr.mnemonic == sh2::Mnemonic::BTS;
-        const bool taken = testTrue ? m_probe->SR().T : !m_probe->SR().T;
-        if (!taken) {
-            return false;
+        isConditionalBranch = true;
+        if (m_probe != nullptr) {
+            const bool testTrue = instr.mnemonic == sh2::Mnemonic::BT || instr.mnemonic == sh2::Mnemonic::BTS;
+            branchTaken = testTrue ? m_probe->SR().T : !m_probe->SR().T;
         }
         type = TraceEventType::Branch;
         setDispPCTarget(instr.op1);

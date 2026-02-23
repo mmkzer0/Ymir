@@ -8,6 +8,10 @@
 #include <array>
 #include <optional>
 
+namespace ymir::sh2 {
+struct DisassembledInstruction;
+} // namespace ymir::sh2
+
 namespace app {
 
 struct SH2Tracer final : ymir::debug::ISH2Tracer {
@@ -45,6 +49,9 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
         uint32 target;
         bool targetValid;
         bool delaySlot;
+        bool hasDelaySlot;
+        bool isConditionalBranch;
+        bool branchTaken;
         uint16 opcode;
         uint32 spBefore;
         uint32 spAfter;
@@ -53,6 +60,7 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
         uint32 gbr;
         uint32 vbr;
         std::array<uint32, 16> regs;
+        uint64 sequenceId;
         uint64 counter;
     };
 
@@ -60,6 +68,7 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
         uint32 pc;
         uint16 opcode;
         bool delaySlot;
+        uint64 sequenceId;
     };
 
     struct InterruptInfo {
@@ -147,12 +156,14 @@ struct SH2Tracer final : ymir::debug::ISH2Tracer {
 private:
     const ymir::sh2::SH2::Probe *m_probe = nullptr;
     uint64 m_traceEventCounter = 0;
+    uint64 m_instructionSequenceCounter = 0;
     uint32 m_interruptCounter = 0;
     uint32 m_divisionCounter = 0;
     std::array<uint32, 2> m_dmaCounter = {0, 0};
 
-    bool ClassifyFlowEvent(uint32 pc, uint16 opcode, bool delaySlot, TraceEventType &type, uint32 &target,
-                           bool &targetValid, std::optional<uint32> &spAfter) const;
+    bool ClassifyFlowEvent(uint32 pc, const ymir::sh2::DisassembledInstruction &instr, bool delaySlot,
+                           TraceEventType &type, uint32 &target, bool &targetValid, std::optional<uint32> &spAfter,
+                           bool &isConditionalBranch, bool &branchTaken) const;
 
     // -------------------------------------------------------------------------
     // ISH2Tracer implementation
