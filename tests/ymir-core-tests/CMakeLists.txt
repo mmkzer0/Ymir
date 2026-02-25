@@ -1,9 +1,12 @@
 ## Create the executable target
 add_executable(ymir-core-tests
+    ../../apps/ymir-sdl3/src/app/debug/sh2_tracer.cpp
+
     src/hw/scu/scu_dsp_tests.cpp
 
     src/hw/sh2/sh2_disasm_tests.cpp
     src/hw/sh2/sh2_divu_tests.cpp
+    src/hw/sh2/sh2_flow_trace_tests.cpp
     src/hw/sh2/sh2_intc_tests.cpp
     src/hw/sh2/sh2_macwl_tests.cpp
 )
@@ -13,6 +16,7 @@ set_target_properties(ymir-core-tests PROPERTIES
                       SOVERSION ${Ymir_VERSION_MAJOR})
 target_link_libraries(ymir-core-tests PRIVATE ymir::ymir-core)
 target_compile_features(ymir-core-tests PUBLIC cxx_std_20)
+target_include_directories(ymir-core-tests PRIVATE ../../apps/ymir-sdl3/src)
 
 find_package(fmt CONFIG REQUIRED)
 find_package(Catch2 CONFIG REQUIRED)
