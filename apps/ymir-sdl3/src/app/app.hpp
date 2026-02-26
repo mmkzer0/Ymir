@@ -22,6 +22,7 @@
 #include "ui/windows/debug/memory_viewer_window.hpp"
 #include "ui/windows/debug/scsp_window_set.hpp"
 #include "ui/windows/debug/scu_window_set.hpp"
+#include "ui/windows/debug/sh2_flow_trace_window.hpp"
 #include "ui/windows/debug/sh2_window_set.hpp"
 #include "ui/windows/debug/vdp_window_set.hpp"
 
@@ -205,6 +206,7 @@ private:
     ui::CDBlockWindowSet m_cdblockWindowSet;
 
     ui::DebugOutputWindow m_debugOutputWindow;
+    ui::SH2FlowTraceWindow m_sh2FlowTraceWindow;
 
     std::vector<ui::MemoryViewerWindow> m_memoryViewerWindows;
 

@@ -145,6 +145,9 @@ add_executable(ymir-sdl3
     src/app/ui/views/debug/sh2_dmac_trace_view.hpp
     src/app/ui/views/debug/sh2_exception_vectors_view.cpp
     src/app/ui/views/debug/sh2_exception_vectors_view.hpp
+    src/app/ui/views/debug/sh2_flow_trace_model.hpp
+    src/app/ui/views/debug/sh2_flow_trace_view.cpp
+    src/app/ui/views/debug/sh2_flow_trace_view.hpp
     src/app/ui/views/debug/sh2_frt_view.cpp
     src/app/ui/views/debug/sh2_frt_view.hpp
     src/app/ui/views/debug/sh2_interrupt_trace_view.cpp
@@ -294,6 +297,8 @@ add_executable(ymir-sdl3
     src/app/ui/windows/debug/sh2_dmac_window.hpp
     src/app/ui/windows/debug/sh2_exception_vectors_window.cpp
     src/app/ui/windows/debug/sh2_exception_vectors_window.hpp
+    src/app/ui/windows/debug/sh2_flow_trace_window.cpp
+    src/app/ui/windows/debug/sh2_flow_trace_window.hpp
     src/app/ui/windows/debug/sh2_interrupt_trace_window.cpp
     src/app/ui/windows/debug/sh2_interrupt_trace_window.hpp
     src/app/ui/windows/debug/sh2_interrupts_window.cpp
