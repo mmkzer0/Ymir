@@ -149,9 +149,6 @@ CMRC_DECLARE(Ymir_sdl3_rc);
 using clk = std::chrono::steady_clock;
 using MidiPortType = app::Settings::Audio::MidiPort::Type;
 
-// tmp global for debug window
-static bool g_showFlowStackTrace = false;
-
 namespace app {
 
 template <typename... TArgs>
@@ -174,6 +171,7 @@ App::App()
     , m_vdpWindowSet(m_context)
     , m_cdblockWindowSet(m_context)
     , m_debugOutputWindow(m_context)
+    , m_sh2FlowTraceWindow(m_context)
     , m_settingsWindow(m_context)
     , m_periphConfigWindow(m_context)
     , m_aboutWindow(m_context)
@@ -3145,10 +3143,7 @@ void App::RunEmulator() {
                     if (flowStackTraceChanged) {
                         m_context.EnqueueEvent(events::emu::SetFlowStackTrace(flowStackTrace));
                     }
-                    bool showFlowStack = g_showFlowStackTrace;
-                    if (ImGui::MenuItem("Show flow/stack trace (temp)", nullptr, &showFlowStack)) {
-                        g_showFlowStackTrace = showFlowStack;
-                    }
+                    ImGui::MenuItem("SH2 flow trace", nullptr, &m_sh2FlowTraceWindow.Open);
                     ImGui::Separator();
                     if (ImGui::MenuItem("Open memory viewer", nullptr)) {
                         OpenMemoryViewer();
@@ -3291,94 +3286,6 @@ void App::RunEmulator() {
                 ImGui::ShowDemoWindow(&showImGuiDemoWindow);
             }
 #endif
-            // TODO: remove in favor of proper debug window
-            // e.g. under apps/ymir-sdl3/src/app/ui/windows/debug/
-            // temporary execution trace ui window
-            if (g_showFlowStackTrace) {
-                ImGui::SetNextWindowSizeConstraints(ImVec2(720 * m_context.displayScale, 240 * m_context.displayScale),
-                                                    ImVec2(960 * m_context.displayScale, FLT_MAX));
-                if (ImGui::Begin("SH2 flow/stack trace (temp)", &g_showFlowStackTrace)) {
-                    auto renderTrace = [&](const char *title, app::SH2Tracer &tracer) {
-                        const size_t count = tracer.traceEvents.Count();
-                        ImGui::SeparatorText(fmt::format("{} ({} events)", title, count).c_str());
-
-                        if (ImGui::Button(fmt::format("Clear##{}", title).c_str())) {
-                            tracer.traceEvents.Clear();
-                        }
-
-                        const size_t rows = count < 256 ? count : 256;
-                        if (ImGui::BeginTable(title, 11,
-                                              ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                                  ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
-                            ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-                            ImGui::TableSetupColumn("Seq", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-                            ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-                            ImGui::TableSetupColumn("PC", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                            ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                            ImGui::TableSetupColumn("SP before", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                            ImGui::TableSetupColumn("SP after", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                            ImGui::TableSetupColumn("Delay", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                            ImGui::TableSetupColumn("Has DS", ImGuiTableColumnFlags_WidthFixed, 70.0f);
-                            ImGui::TableSetupColumn("Cond", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                            ImGui::TableSetupColumn("Taken", ImGuiTableColumnFlags_WidthFixed, 60.0f);
-                            ImGui::TableHeadersRow();
-
-                            for (size_t i = 0; i < rows; ++i) {
-                                const auto evt = tracer.traceEvents.ReadReverse(i);
-                                ImGui::TableNextRow();
-
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%llu", static_cast<unsigned long long>(evt.counter));
-
-                                ImGui::TableNextColumn();
-                                ImGui::Text("%llu", static_cast<unsigned long long>(evt.sequenceId));
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextUnformatted(app::SH2Tracer::TraceEventMnemonic(evt.type));
-
-                                ImGui::TableNextColumn();
-                                ImGui::Text("0x%08X", evt.pc);
-
-                                ImGui::TableNextColumn();
-                                if (evt.targetValid) {
-                                    ImGui::Text("0x%08X", evt.target);
-                                } else {
-                                    ImGui::TextUnformatted("-");
-                                }
-
-                                ImGui::TableNextColumn();
-                                ImGui::Text("0x%08X", evt.spBefore);
-
-                                ImGui::TableNextColumn();
-                                ImGui::Text("0x%08X", evt.spAfter);
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextUnformatted(evt.delaySlot ? "Yes" : "No");
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextUnformatted(evt.hasDelaySlot ? "Yes" : "No");
-
-                                ImGui::TableNextColumn();
-                                ImGui::TextUnformatted(evt.isConditionalBranch ? "Yes" : "No");
-
-                                ImGui::TableNextColumn();
-                                if (evt.isConditionalBranch) {
-                                    ImGui::TextUnformatted(evt.branchTaken ? "Yes" : "No");
-                                } else {
-                                    ImGui::TextUnformatted("-");
-                                }
-                            }
-
-                            ImGui::EndTable();
-                        }
-                    };
-
-                    renderTrace("Master SH2", m_context.tracers.masterSH2);
-                    renderTrace("Slave SH2", m_context.tracers.slaveSH2);
-                }
-                ImGui::End();
-            }
-
             /*if (ImGui::Begin("Audio buffer")) {
                 ImGui::SetNextItemWidth(-1);
                 ImGui::ProgressBar((float)m_context.audioSystem.GetBufferCount() /
@@ -5997,6 +5904,7 @@ void App::DrawWindows() {
     m_cdblockWindowSet.DisplayAll();
 
     m_debugOutputWindow.Display();
+    m_sh2FlowTraceWindow.Display();
 
     for (auto &memView : m_memoryViewerWindows) {
         memView.Display();
