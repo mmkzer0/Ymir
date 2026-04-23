@@ -1,39 +1,94 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ==============================================================================
+# Ymir iOS XCFramework Build Script
+# ==============================================================================
+# Refactored: Phase 1 (Preflight & Structure)
+# ==============================================================================
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_ROOT="${ROOT_DIR}/build/ios"
 BUILD_TYPE="${BUILD_TYPE:-RelWithDebInfo}"
 IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-16.0}"
 
-# VCPKG_ROOT discovery and validation
-LOCAL_VCPKG="${ROOT_DIR}/vcpkg"
+# --- Logging Helpers ---
 
-# If a local submodule exists and is functional, prioritize it for project consistency
-if [ -d "${LOCAL_VCPKG}" ] && [ -f "${LOCAL_VCPKG}/scripts/buildsystems/vcpkg.cmake" ]; then
-  if [ -n "${VCPKG_ROOT:-}" ] && [ "${VCPKG_ROOT}" != "${LOCAL_VCPKG}" ]; then
-    echo "Note: Overriding environment VCPKG_ROOT with local submodule for consistency."
+log_phase() {
+  echo -e "\n\033[1;34m[PHASE] $1\033[0m"
+}
+
+log_info() {
+  echo -e "\033[0;32m[INFO]\033[0m $1"
+}
+
+log_warn() {
+  echo -e "\033[0;33m[WARN]\033[0m $1"
+}
+
+log_error() {
+  echo -e "\033[0;31m[ERROR]\033[0m $1" >&2
+}
+
+# --- Preflight Checks ---
+
+preflight() {
+  log_phase "Preflight Checks"
+
+  local required_bins=("cmake" "xcrun" "xcodebuild" "libtool")
+  for bin in "${required_bins[@]}"; do
+    if ! command -v "${bin}" >/dev/null 2>&1; then
+      log_error "Required tool '${bin}' not found in PATH."
+      exit 1
+    fi
+  done
+  log_info "Toolchain binaries verified."
+
+  if [ -n "${CMAKE_GENERATOR:-}" ]; then
+    case "${CMAKE_GENERATOR}" in
+      Ninja)
+        if ! command -v ninja >/dev/null 2>&1; then
+          log_error "CMAKE_GENERATOR is set to 'Ninja' but 'ninja' was not found in PATH."
+          exit 1
+        fi
+        ;;
+    esac
   fi
-  export VCPKG_ROOT="${LOCAL_VCPKG}"
-  echo "Using local vcpkg: ${VCPKG_ROOT}"
-fi
 
-# Validate VCPKG_ROOT if it was provided by environment and we didn't use the submodule
-if [ -n "${VCPKG_ROOT:-}" ]; then
-  if [ ! -f "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" ]; then
-    echo "Warning: VCPKG_ROOT is set to '${VCPKG_ROOT}' but it is not a valid vcpkg installation (missing toolchain)."
-    unset VCPKG_ROOT
+  # Verify iOS SDKs
+  if ! xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+    log_error "iOS SDK (iphoneos) not found."
+    exit 1
   fi
-fi
+  if ! xcrun --sdk iphonesimulator --show-sdk-path >/dev/null 2>&1; then
+    log_error "iOS Simulator SDK (iphonesimulator) not found."
+    exit 1
+  fi
+  log_info "iOS SDKs verified."
 
-# Optional environment variables:
-# - VCPKG_ROOT: path to vcpkg root (enables vcpkg toolchain)
-# - VCPKG_TARGET_TRIPLET: override inferred triplet per SDK
-# - CMAKE_GENERATOR: override CMake generator
-# - BUILD_TYPE: override CMake build type (default: RelWithDebInfo)
-# - IOS_DEPLOYMENT_TARGET: override iOS deployment target (default: 16.0)
+  # VCPKG Discovery
+  LOCAL_VCPKG="${ROOT_DIR}/vcpkg"
+  if [ -d "${LOCAL_VCPKG}" ] && [ -f "${LOCAL_VCPKG}/scripts/buildsystems/vcpkg.cmake" ]; then
+    if [ -n "${VCPKG_ROOT:-}" ] && [ "${VCPKG_ROOT}" != "${LOCAL_VCPKG}" ]; then
+      log_info "Overriding environment VCPKG_ROOT with local submodule for consistency."
+    fi
+    export VCPKG_ROOT="${LOCAL_VCPKG}"
+  fi
 
-# Argument parsing
+  if [ -n "${VCPKG_ROOT:-}" ]; then
+    if [ ! -f "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" ]; then
+      log_warn "VCPKG_ROOT points to invalid installation. Disabling vcpkg support."
+      unset VCPKG_ROOT
+    else
+      log_info "Using VCPKG: ${VCPKG_ROOT}"
+    fi
+  else
+    log_warn "VCPKG_ROOT not set and no local submodule found. Build may fail if dependencies are missing."
+  fi
+}
+
+# --- Argument Parsing ---
+
 NO_BINARY_CACHE=0
 
 show_help() {
@@ -43,29 +98,33 @@ show_help() {
   echo "  -h, --help                Show this help message"
 }
 
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    -nbc|--no-binary-cache)
-      NO_BINARY_CACHE=1
-      shift
-      ;;
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    *)
-      echo "Unknown option: $1"
-      show_help
-      exit 1
-      ;;
-  esac
-done
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -nbc | --no-binary-cache)
+        NO_BINARY_CACHE=1
+        shift
+        ;;
+      -h | --help)
+        show_help
+        exit 0
+        ;;
+      *)
+        log_error "Unknown option: $1"
+        show_help
+        exit 1
+        ;;
+    esac
+  done
+}
 
-IOS_SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
-SIM_SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+# --- VCPKG Setup & Overrides ---
 
-ensure_vcpkg_curl_overlay() {
+prepare_vcpkg_curl_overlay() {
+  log_phase "Preparing VCPKG Overrides"
+
   if [ -z "${VCPKG_ROOT:-}" ]; then
+    log_info "Skipping overlays (vcpkg not enabled)."
     return 0
   fi
 
@@ -73,9 +132,10 @@ ensure_vcpkg_curl_overlay() {
   local curl_overlay_dir="${overlay_root}/curl"
   mkdir -p "${curl_overlay_dir}"
 
+  log_info "Generating curl overlay to fix pipe2 on iOS Simulator..."
   cp -R "${VCPKG_ROOT}/ports/curl/." "${curl_overlay_dir}/"
 
-  cat <<EOF > "${curl_overlay_dir}/disable-pipe2-on-apple-mobile.patch"
+  cat <<EOF >"${curl_overlay_dir}/disable-pipe2-on-apple-mobile.patch"
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index ed0561d..655a22d 100644
 --- a/CMakeLists.txt
@@ -95,7 +155,7 @@ index ed0561d..655a22d 100644
  check_symbol_exists("getpeername"     "\${CURL_INCLUDES}" HAVE_GETPEERNAME)  # winsock2.h unistd.h proto/bsdsocket.h
 EOF
 
-  cat <<EOF > "${curl_overlay_dir}/portfile.cmake"
+  cat <<EOF >"${curl_overlay_dir}/portfile.cmake"
 string(REPLACE "." "_" curl_version "curl-\${VERSION}")
 
 vcpkg_from_github(
@@ -260,7 +320,8 @@ ensure_vcpkg_triplets() {
 
   # Create arm64-ios triplet if missing
   if [ ! -f "${triplet_dir}/arm64-ios.cmake" ]; then
-    cat <<EOF > "${triplet_dir}/arm64-ios.cmake"
+    log_info "Creating arm64-ios triplet..."
+    cat <<EOF >"${triplet_dir}/arm64-ios.cmake"
 set(VCPKG_TARGET_ARCHITECTURE arm64)
 set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
@@ -269,7 +330,8 @@ EOF
   fi
 
   # Create/Update arm64-ios-simulator triplet with the pipe2 fix
-  cat <<EOF > "${triplet_dir}/arm64-ios-simulator.cmake"
+  log_info "Updating arm64-ios-simulator triplet..."
+  cat <<EOF >"${triplet_dir}/arm64-ios-simulator.cmake"
 set(VCPKG_TARGET_ARCHITECTURE arm64)
 set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
@@ -281,11 +343,13 @@ set(HAVE_PIPE2_EXITCODE "0" CACHE INTERNAL "" FORCE)
 EOF
 
   # Keep stale curl state from bypassing updated triplet/overlay behavior.
-  if [ -d "${VCPKG_ROOT}/buildtrees/curl" ]; then
-    echo "Forcing clean build of curl to apply triplet changes..."
+  if [ -d "${VCPKG_ROOT:-}/buildtrees/curl" ]; then
+    log_info "Forcing clean build of curl to apply triplet changes..."
     rm -rf "${VCPKG_ROOT}/buildtrees/curl"
   fi
 }
+
+# --- Build Phase ---
 
 find_lib() {
   local pattern="$1"
@@ -307,32 +371,16 @@ combine_libs() {
     inputs+=("${core_lib}")
   fi
 
-  local fmt_lib
-  fmt_lib="$(find_lib "libfmt.a" "${build_dir}")"
-  if [ -n "${fmt_lib}" ]; then
-    inputs+=("${fmt_lib}")
-  fi
-
-  local xxhash_lib
-  xxhash_lib="$(find_lib "libxxHash.a" "${build_dir}")"
-  if [ -n "${xxhash_lib}" ]; then
-    inputs+=("${xxhash_lib}")
-  fi
-
-  local chdr_lib
-  chdr_lib="$(find_lib "libchdr-static.a" "${build_dir}")"
-  if [ -n "${chdr_lib}" ]; then
-    inputs+=("${chdr_lib}")
-  fi
-
-  local lzma_lib
-  lzma_lib="$(find_lib "liblzma.a" "${build_dir}")"
-  if [ -n "${lzma_lib}" ]; then
-    inputs+=("${lzma_lib}")
-  fi
+  local libs=("libfmt.a" "libxxHash.a" "libchdr-static.a" "liblzma.a")
+  for lib in "${libs[@]}"; do
+    local path
+    path="$(find_lib "${lib}" "${build_dir}")"
+    if [ -n "${path}" ]; then
+      inputs+=("${path}")
+    fi
+  done
 
   if [ "${#inputs[@]}" -eq 0 ]; then
-    echo "" >&2
     return 1
   fi
 
@@ -344,6 +392,8 @@ build_slice() {
   local sdk_name="$1"
   local sdk_path="$2"
   local build_dir="$3"
+
+  log_phase "Building Slice: ${sdk_name}"
 
   local toolchain_args=()
   if [ -n "${VCPKG_ROOT:-}" ]; then
@@ -383,7 +433,6 @@ build_slice() {
     -DYmir_INCLUDE_PACKAGING=OFF
     -DYmir_ENABLE_IPO=OFF
     -DYmir_ENABLE_DEVLOG=ON
-    # compile_commands.json
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
   )
 
@@ -391,7 +440,10 @@ build_slice() {
     cmake_cmd=(cmake -G "${CMAKE_GENERATOR}" "${cmake_cmd[@]:1}")
   fi
 
+  log_info "Configuring ${sdk_name}..."
   "${cmake_cmd[@]}" "${toolchain_args[@]}"
+
+  log_info "Building ${sdk_name}..."
   cmake --build "${build_dir}" --target ymir-core --parallel
 
   local header_dir="${build_dir}/xcframework_headers"
@@ -403,36 +455,57 @@ build_slice() {
   fi
 }
 
+# --- Assembly Phase ---
+
+assemble_xcframework() {
+  log_phase "Assembling XCFramework"
+
+  local device_lib
+  device_lib="$(combine_libs "${BUILD_ROOT}/iphoneos")"
+  local sim_lib
+  sim_lib="$(combine_libs "${BUILD_ROOT}/iphonesimulator")"
+
+  if [ ! -f "${device_lib:-}" ] || [ ! -f "${sim_lib:-}" ]; then
+    log_error "Failed to locate combined libraries for assembly."
+    exit 1
+  fi
+
+  XCFRAMEWORK_PATH="${BUILD_ROOT}/ymir-core.xcframework"
+  rm -rf "${XCFRAMEWORK_PATH}"
+
+  log_info "Creating XCFramework at ${XCFRAMEWORK_PATH}"
+  xcodebuild -create-xcframework \
+    -library "${device_lib}" -headers "${BUILD_ROOT}/iphoneos/xcframework_headers" \
+    -library "${sim_lib}" -headers "${BUILD_ROOT}/iphonesimulator/xcframework_headers" \
+    -output "${XCFRAMEWORK_PATH}"
+}
+
+report_artifacts() {
+  log_phase "Build Report"
+  if [ -d "${BUILD_ROOT}/ymir-core.xcframework" ]; then
+    log_info "SUCCESS: XCFramework generated."
+    echo -e "\033[0;32m$(du -sh "${BUILD_ROOT}/ymir-core.xcframework")\033[0m"
+  else
+    log_error "FAILURE: XCFramework missing."
+    exit 1
+  fi
+}
+
+# --- Main Execution ---
+
+parse_args "$@"
+preflight
+
 mkdir -p "${BUILD_ROOT}"
 
-ensure_vcpkg_curl_overlay
+prepare_vcpkg_curl_overlay
 ensure_vcpkg_triplets
 
-DEVICE_BUILD_DIR="${BUILD_ROOT}/iphoneos"
-SIM_BUILD_DIR="${BUILD_ROOT}/iphonesimulator"
+IOS_SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+SIM_SDK_PATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 
-build_slice "iphoneos" "${IOS_SDK_PATH}" "${DEVICE_BUILD_DIR}"
-build_slice "iphonesimulator" "${SIM_SDK_PATH}" "${SIM_BUILD_DIR}"
+build_slice "iphoneos" "${IOS_SDK_PATH}" "${BUILD_ROOT}/iphoneos"
+build_slice "iphonesimulator" "${SIM_SDK_PATH}" "${BUILD_ROOT}/iphonesimulator"
 
-DEVICE_LIB="$(combine_libs "${DEVICE_BUILD_DIR}")"
-SIM_LIB="$(combine_libs "${SIM_BUILD_DIR}")"
-
-if [ ! -f "${DEVICE_LIB}" ]; then
-  echo "Missing device library: ${DEVICE_LIB}" >&2
-  exit 1
-fi
-
-if [ ! -f "${SIM_LIB}" ]; then
-  echo "Missing simulator library: ${SIM_LIB}" >&2
-  exit 1
-fi
-
-XCFRAMEWORK_PATH="${BUILD_ROOT}/ymir-core.xcframework"
-rm -rf "${XCFRAMEWORK_PATH}"
-
-xcodebuild -create-xcframework \
-  -library "${DEVICE_LIB}" -headers "${DEVICE_BUILD_DIR}/xcframework_headers" \
-  -library "${SIM_LIB}" -headers "${SIM_BUILD_DIR}/xcframework_headers" \
-  -output "${XCFRAMEWORK_PATH}"
-
-echo "XCFramework written to ${XCFRAMEWORK_PATH}"
+assemble_xcframework
+report_artifacts
