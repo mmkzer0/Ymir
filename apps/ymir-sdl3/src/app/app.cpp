@@ -5971,7 +5971,38 @@ void App::InvokeFileDialog(SDL_FileDialogType type, const char *title, void *fil
     SDL_SetBooleanProperty(props, SDL_PROP_FILE_DIALOG_MANY_BOOLEAN, allowMany);
     SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_LOCATION_STRING, location);
 
-    SDL_ShowFileDialogWithProperties(type, callback, userdata, props);
+    if (m_settings.video.fullScreen && !m_settings.video.borderlessFullScreen) {
+        devlog::debug<grp::base>("Switching to borderless fullscreen mode before opening file dialog");
+
+        // If in exclusive fullscreen mode, switch to borderless fullscreen mode temporarily
+        SDL_SetWindowFullscreenMode(m_context.screen.window, nullptr);
+        SDL_SetWindowFullscreen(m_context.screen.window, true);
+        SDL_SyncWindow(m_context.screen.window);
+
+        // Pass callback and user data pointer to file dialog properties
+        SDL_SetPointerProperty(props, "ymir.filedialog.callback", (void *)callback);
+        SDL_SetPointerProperty(props, "ymir.filedialog.userdata", userdata);
+
+        SDL_ShowFileDialogWithProperties(
+            type,
+            [](void *userdata, const char *const *filelist, int filter) {
+                auto *app = static_cast<App *>(userdata);
+                SDL_PropertiesID props = app->m_fileDialogProps;
+                auto callback =
+                    (SDL_DialogFileCallback)SDL_GetPointerProperty(props, "ymir.filedialog.callback", nullptr);
+                auto *cbUserdata = SDL_GetPointerProperty(props, "ymir.filedialog.userdata", nullptr);
+
+                callback(cbUserdata, filelist, filter);
+
+                devlog::debug<grp::base>("Restoring exclusive fullscreen mode after closing file dialog");
+
+                // Restore fullscreen mode after processing the callback
+                app->ApplyFullscreenMode();
+            },
+            userdata, props);
+    } else {
+        SDL_ShowFileDialogWithProperties(type, callback, (void *)this, props);
+    }
 }
 
 void App::DrawWindows() {
