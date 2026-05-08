@@ -1,5 +1,6 @@
 add_executable(ymir-headless-tests
     src/smoke_tests.cpp
+    src/protocol_tests.cpp
 )
 add_executable(ymir::ymir-headless-tests ALIAS ymir-headless-tests)
 set_target_properties(ymir-headless-tests PROPERTIES
@@ -9,7 +10,10 @@ target_compile_features(ymir-headless-tests PUBLIC cxx_std_20)
 
 find_package(Catch2 CONFIG REQUIRED)
 
-target_link_libraries(ymir-headless-tests PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(ymir-headless-tests PRIVATE
+    Catch2::Catch2WithMain
+    ymir::ymir-headless-proto
+)
 
 cmrk_copy_runtime_dlls(ymir-headless-tests)
 
