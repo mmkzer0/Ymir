@@ -125,6 +125,7 @@ add_subdirectory(apps)
 
 ## Include the unit tests if the user wanted them (included by default when top-level)
 if (Ymir_ENABLE_TESTS)
+    enable_testing()
     add_subdirectory(tests)
 endif ()
 
