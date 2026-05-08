@@ -22,6 +22,9 @@ target_include_directories(ymir-headless-tests PRIVATE
 
 cmrk_copy_runtime_dlls(ymir-headless-tests)
 
+include(CheckIPOSupported)
+check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR)
+
 if (IPO_SUPPORTED AND Ymir_ENABLE_IPO)
     message(STATUS "Enabling IPO / LTO for ymir-headless-tests")
     set_property(TARGET ymir-headless-tests PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)

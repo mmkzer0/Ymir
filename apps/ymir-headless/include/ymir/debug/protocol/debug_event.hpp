@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -13,20 +12,26 @@ namespace ymir::debug {
 
 struct DebugStoppedEvent {
     std::string instance_id;
-    StopReason reason;
-    DebugTarget target;
+    StopReason reason{StopReason::Entry};
+    DebugTarget target{DebugTarget::Sh2Master};
     uint32_t pc{};
     uint32_t sequence{};
     std::optional<std::string> breakpoint_id;
 };
 
+struct TargetInfo {
+    DebugTarget target{DebugTarget::Sh2Master};
+    bool enabled{true};
+};
+
 struct InstanceReadyEvent {
-    std::string_view protocol;
-    std::string_view protocol_version;
-    std::string_view transport;
+    std::string protocol;
+    std::string protocol_version;
+    std::string transport;
     std::string instance_id;
     ExecutionState state;
     std::vector<std::string> capabilities;
+    std::vector<TargetInfo> targets;
 };
 
 using DebugEventPayload = std::variant<DebugStoppedEvent, InstanceReadyEvent>;

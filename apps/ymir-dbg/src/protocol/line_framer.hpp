@@ -8,12 +8,16 @@
 
 namespace ymir::debug {
 
+enum class LineFramerError {
+    LineTooLong,
+};
+
 class LineFramer {
 public:
     static constexpr size_t kMaxLineLength = 1024 * 1024; // 1 MiB
 
     using LineCallback = std::function<void(std::string_view)>;
-    using ErrorCallback = std::function<void(std::string_view)>;
+    using ErrorCallback = std::function<void(LineFramerError)>;
 
     LineFramer(LineCallback onLine, ErrorCallback onError)
         : m_onLine(std::move(onLine))
@@ -22,18 +26,25 @@ public:
     void Push(const char *data, size_t length) {
         for (size_t i = 0; i < length; ++i) {
             const char c = data[i];
-            if (c == '\n') {
-                if (m_droppingOversizedLine) {
-                    m_droppingOversizedLine = false;
-                } else if (!m_buffer.empty()) {
-                    m_onLine(m_buffer);
-                }
-                m_buffer.clear();
-            } else if (c == '\r' || m_droppingOversizedLine) {
+            if (c == '\r') {
+                EmitLine();
+                m_lastWasCarriageReturn = true;
                 continue;
-            } else if (m_buffer.length() >= kMaxLineLength) {
-                m_onError("Line length limit exceeded");
-                m_buffer.clear();
+            }
+            if (c == '\n') {
+                if (!m_lastWasCarriageReturn) {
+                    EmitLine();
+                }
+                m_lastWasCarriageReturn = false;
+                continue;
+            }
+
+            m_lastWasCarriageReturn = false;
+            if (m_droppingOversizedLine) {
+                continue;
+            }
+            if (m_buffer.length() >= kMaxLineLength) {
+                m_onError(LineFramerError::LineTooLong);
                 m_droppingOversizedLine = true;
             } else {
                 m_buffer += c;
@@ -42,8 +53,18 @@ public:
     }
 
 private:
+    void EmitLine() {
+        if (m_droppingOversizedLine) {
+            m_droppingOversizedLine = false;
+        } else if (!m_buffer.empty()) {
+            m_onLine(m_buffer);
+        }
+        m_buffer.clear();
+    }
+
     std::string m_buffer;
     bool m_droppingOversizedLine{};
+    bool m_lastWasCarriageReturn{};
     LineCallback m_onLine;
     ErrorCallback m_onError;
 };

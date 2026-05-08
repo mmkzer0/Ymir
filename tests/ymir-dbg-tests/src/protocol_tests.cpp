@@ -11,7 +11,7 @@
 TEST_CASE("ymir-dbg LineFramer buffers protocol lines", "[protocol]") {
     std::vector<std::string> lines;
     ymir::debug::LineFramer framer([&](std::string_view line) { lines.emplace_back(line); },
-                                   [](std::string_view err) { FAIL("Unexpected error: " << err); });
+                                   [](ymir::debug::LineFramerError) { FAIL("Unexpected error"); });
 
     const std::string first = R"({"jsonrpc":"2.0","id":"a)";
     const std::string second = R"(bc","result":{}})"
@@ -26,10 +26,13 @@ TEST_CASE("ymir-dbg LineFramer buffers protocol lines", "[protocol]") {
 }
 
 TEST_CASE("ymir-dbg LineFramer recovers after oversized line", "[protocol]") {
-    std::string error;
+    bool sawError{};
     std::vector<std::string> lines;
     ymir::debug::LineFramer framer([&](std::string_view line) { lines.emplace_back(line); },
-                                   [&](std::string_view err) { error = err; });
+                                   [&](ymir::debug::LineFramerError err) {
+                                       sawError = true;
+                                       CHECK(err == ymir::debug::LineFramerError::LineTooLong);
+                                   });
 
     std::string oversized(ymir::debug::LineFramer::kMaxLineLength + 1, 'x');
     oversized += "\n";
@@ -37,7 +40,7 @@ TEST_CASE("ymir-dbg LineFramer recovers after oversized line", "[protocol]") {
     oversized += "\n";
 
     framer.Push(oversized.data(), oversized.size());
-    CHECK(error == "Line length limit exceeded");
+    CHECK(sawError);
     REQUIRE(lines.size() == 1);
     CHECK(lines[0] == R"({"jsonrpc":"2.0","method":"debug.version","id":1})");
 }
@@ -48,7 +51,7 @@ TEST_CASE("ymir-dbg JsonRpcAdapter preserves request IDs", "[protocol]") {
     auto integerRequest =
         ymir::debug::JsonRpcAdapter::ParseRequest(R"({"jsonrpc":"2.0","method":"debug.version","id":7})", error);
     REQUIRE(integerRequest.has_value());
-    CHECK(std::get<int>(integerRequest->id) == 7);
+    CHECK(std::get<int64_t>(integerRequest->id) == 7);
     CHECK_FALSE(integerRequest->is_notification);
 
     auto stringRequest =

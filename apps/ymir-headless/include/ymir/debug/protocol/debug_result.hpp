@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -11,18 +10,23 @@
 
 namespace ymir::debug {
 
-struct DebugVersionResult {
-    std::string_view protocol;
-    std::string_view protocol_version;
-    std::string_view transport;
-    std::string application_name;
-    std::string application_version;
+struct ApplicationInfo {
+    std::string name;
+    std::string version;
     std::string git_sha;
+};
+
+struct DebugVersionResult {
+    std::string protocol;
+    std::string protocol_version;
+    std::string transport;
+    ApplicationInfo application;
     std::vector<std::string> capabilities;
 };
 
 struct InstanceStatusResult {
-    std::string_view protocol;
+    std::string protocol;
+    std::string instance_id;
     ExecutionState state;
     bool slave_enabled;
     std::vector<std::string> capabilities;

@@ -89,6 +89,7 @@ using DebugCommandParams = std::variant<std::monostate, RegsReadParams, MemPeekP
                                         BreakpointSetParams, BreakpointListParams, BreakpointIdParams, ExecStepIParams>;
 
 struct DebugCommand {
+    DebugRequestId request_id;
     CommandMethod method{CommandMethod::DebugVersion};
     DebugCommandParams params;
 };

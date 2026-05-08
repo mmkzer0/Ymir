@@ -1,6 +1,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <ymir/debug/protocol/debug_types.hpp>
 
 #include <optional>
 #include <string>
@@ -11,7 +12,9 @@
 
 namespace ymir::debug {
 
-using JsonRpcId = std::variant<std::monostate, int, std::string>;
+inline constexpr std::string_view kStdioJsonRpcLinesTransport = "stdio-jsonrpc-lines";
+
+using JsonRpcId = DebugRequestId;
 
 struct JsonRpcRequest {
     JsonRpcId id;
@@ -20,10 +23,15 @@ struct JsonRpcRequest {
     bool is_notification{false};
 };
 
+struct JsonRpcResponseSuccess {
+    nlohmann::json result;
+};
+struct JsonRpcResponseError {
+    nlohmann::json error;
+};
 struct JsonRpcResponse {
     JsonRpcId id;
-    nlohmann::json result;
-    std::optional<nlohmann::json> error;
+    std::variant<JsonRpcResponseSuccess, JsonRpcResponseError> payload;
 };
 
 struct JsonRpcNotification {
@@ -98,7 +106,7 @@ public:
 
             if (j.contains("id")) {
                 if (j["id"].is_number_integer()) {
-                    req.id = j["id"].get<int>();
+                    req.id = j["id"].get<int64_t>();
                 } else if (j["id"].is_string()) {
                     req.id = j["id"].get<std::string>();
                 } else if (j["id"].is_null()) {

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <variant>
 
 namespace ymir::debug {
 
@@ -104,5 +105,7 @@ struct ErrorInfo {
     ErrorCode code{ErrorCode::InternalError};
     std::string message;
 };
+
+using DebugRequestId = std::variant<std::monostate, int64_t, std::string>;
 
 } // namespace ymir::debug

@@ -16,7 +16,7 @@
 TEST_CASE("Protocol version constants", "[protocol]") {
     CHECK(ymir::debug::kProtocolName == "ymir-debug");
     CHECK(ymir::debug::kProtocolVersion == "0.1.0");
-    CHECK(ymir::debug::kTransport == "stdio-jsonrpc-lines");
+    CHECK(ymir::debug::kStdioJsonRpcLinesTransport == "stdio-jsonrpc-lines");
 }
 
 TEST_CASE("DebugTarget string round-trip", "[protocol]") {
@@ -135,6 +135,87 @@ TEST_CASE("DebugEvent carries typed event payload", "[protocol]") {
     CHECK(stopped.pc == 0x06004000);
 }
 
+TEST_CASE("DebugVersionResult with nested ApplicationInfo", "[protocol]") {
+    ymir::debug::DebugVersionResult version;
+    version.protocol = "ymir-debug";
+    version.protocol_version = "0.1.0";
+    version.transport = "stdio-jsonrpc-lines";
+    version.application.name = "ymir-headless";
+    version.application.version = "0.3.2-dev";
+    version.application.git_sha = "unknown";
+    version.capabilities = {"sh2.master", "sh2.slave"};
+
+    CHECK(version.application.name == "ymir-headless");
+    CHECK(version.application.version == "0.3.2-dev");
+    CHECK(version.capabilities.size() == 2);
+}
+
+TEST_CASE("InstanceStatusResult includes instance_id", "[protocol]") {
+    ymir::debug::InstanceStatusResult status;
+    status.instance_id = "local-001";
+    status.state = ymir::debug::ExecutionState::Paused;
+    status.slave_enabled = false;
+
+    CHECK(status.instance_id == "local-001");
+    CHECK(status.state == ymir::debug::ExecutionState::Paused);
+    CHECK_FALSE(status.slave_enabled);
+}
+
+TEST_CASE("InstanceReadyEvent full shape", "[protocol]") {
+    ymir::debug::InstanceReadyEvent ready;
+    ready.protocol = "ymir-debug";
+    ready.protocol_version = "0.1.0";
+    ready.transport = "stdio-jsonrpc-lines";
+    ready.instance_id = "local-001";
+    ready.state = ymir::debug::ExecutionState::Paused;
+    ready.capabilities = {"sh2.master", "sh2.slave", "regs.read"};
+    ready.targets = {
+        ymir::debug::TargetInfo{ymir::debug::DebugTarget::Sh2Master, true},
+        ymir::debug::TargetInfo{ymir::debug::DebugTarget::Sh2Slave, false},
+    };
+
+    CHECK(ready.instance_id == "local-001");
+    REQUIRE(ready.targets.size() == 2);
+    CHECK(ready.targets[0].enabled);
+    CHECK_FALSE(ready.targets[1].enabled);
+}
+
+TEST_CASE("DebugCommand carries request_id", "[protocol]") {
+    ymir::debug::DebugCommand cmd;
+    cmd.request_id = int64_t{42};
+    cmd.method = ymir::debug::CommandMethod::DebugVersion;
+
+    CHECK(std::get<int64_t>(cmd.request_id) == 42);
+
+    cmd.request_id = std::string{"req-001"};
+    CHECK(std::get<std::string>(cmd.request_id) == "req-001");
+
+    cmd.request_id = std::monostate{};
+    CHECK(std::holds_alternative<std::monostate>(cmd.request_id));
+}
+
+TEST_CASE("DebugRequestId variant round-trip", "[protocol]") {
+    ymir::debug::DebugRequestId id;
+
+    id = int64_t{0};
+    CHECK(std::get<int64_t>(id) == 0);
+
+    id = int64_t{-1};
+    CHECK(std::get<int64_t>(id) == -1);
+
+    id = std::string{};
+    CHECK(std::get<std::string>(id).empty());
+
+    id = std::string{"abc"};
+    CHECK(std::get<std::string>(id) == "abc");
+}
+
+TEST_CASE("TargetInfo initializes", "[protocol]") {
+    ymir::debug::TargetInfo info;
+    CHECK(info.target == ymir::debug::DebugTarget::Sh2Master);
+    CHECK(info.enabled);
+}
+
 TEST_CASE("ErrorInfo construction", "[protocol]") {
     ymir::debug::ErrorInfo err{ymir::debug::ErrorCode::InvalidState, "not paused"};
     CHECK(err.code == ymir::debug::ErrorCode::InvalidState);
@@ -144,7 +225,7 @@ TEST_CASE("ErrorInfo construction", "[protocol]") {
 TEST_CASE("LineFramer splits lines", "[protocol]") {
     std::vector<std::string> lines;
     ymir::debug::LineFramer framer([&](std::string_view line) { lines.emplace_back(line); },
-                                   [](std::string_view err) { FAIL("Unexpected error: " << err); });
+                                   [](ymir::debug::LineFramerError) { FAIL("Unexpected error"); });
 
     SECTION("Single line") {
         std::string data = "hello\n";
@@ -170,13 +251,29 @@ TEST_CASE("LineFramer splits lines", "[protocol]") {
         REQUIRE(lines.size() == 1);
         CHECK(lines[0] == "partial");
     }
+
+    SECTION("CRLF line terminator") {
+        std::string data = "hello\r\nworld\r\n";
+        framer.Push(data.data(), data.length());
+        REQUIRE(lines.size() == 2);
+        CHECK(lines[0] == "hello");
+        CHECK(lines[1] == "world");
+    }
+
+    SECTION("Bare CR line terminator") {
+        std::string data = "hello\rworld\r";
+        framer.Push(data.data(), data.length());
+        REQUIRE(lines.size() == 2);
+        CHECK(lines[0] == "hello");
+        CHECK(lines[1] == "world");
+    }
 }
 
 TEST_CASE("LineFramer enforces max length", "[protocol]") {
-    std::string error;
+    bool sawError{};
     std::vector<std::string> lines;
     ymir::debug::LineFramer framer([&](std::string_view line) { lines.emplace_back(line); },
-                                   [&](std::string_view err) { error = err; });
+                                   [&](ymir::debug::LineFramerError) { sawError = true; });
 
     std::string maxLine(ymir::debug::LineFramer::kMaxLineLength, 'a');
     maxLine += '\n';
@@ -189,7 +286,7 @@ TEST_CASE("LineFramer enforces max length", "[protocol]") {
     longLine += "\nvalid\n";
 
     framer.Push(longLine.data(), longLine.length());
-    CHECK(error == "Line length limit exceeded");
+    CHECK(sawError);
     REQUIRE(lines.size() == 1);
     CHECK(lines[0] == "valid");
 }
@@ -202,7 +299,7 @@ TEST_CASE("JsonRpcAdapter parses requests", "[protocol]") {
         auto req = ymir::debug::JsonRpcAdapter::ParseRequest(line, error);
         REQUIRE(req.has_value());
         CHECK(req->method == "debug.version");
-        CHECK(std::get<int>(req->id) == 1);
+        CHECK(std::get<int64_t>(req->id) == 1);
         CHECK_FALSE(req->is_notification);
     }
 
@@ -230,8 +327,8 @@ TEST_CASE("JsonRpcAdapter parses requests", "[protocol]") {
 }
 
 TEST_CASE("JsonRpcAdapter creates method-not-found errors", "[protocol]") {
-    const auto error =
-        ymir::debug::JsonRpcAdapter::CreateMethodNotFoundResponse(ymir::debug::JsonRpcId{42}, "unknown.method");
+    const auto error = ymir::debug::JsonRpcAdapter::CreateMethodNotFoundResponse(ymir::debug::JsonRpcId{int64_t{42}},
+                                                                                 "unknown.method");
 
     CHECK(error["id"] == 42);
     CHECK(error["error"]["code"] == static_cast<int>(ymir::debug::JsonRpcError::MethodNotFound));
@@ -245,7 +342,7 @@ TEST_CASE("JsonRpcAdapter ID preservation", "[protocol]") {
         std::string line = R"({"jsonrpc": "2.0", "method": "debug.version", "id": 42})";
         auto req = ymir::debug::JsonRpcAdapter::ParseRequest(line, error);
         REQUIRE(req.has_value());
-        CHECK(std::get<int>(req->id) == 42);
+        CHECK(std::get<int64_t>(req->id) == 42);
     }
 
     SECTION("String ID") {
