@@ -29,7 +29,7 @@ struct InstanceStatusResult {
 };
 
 struct RegsReadResult {
-    DebugTarget target;
+    DebugTarget target{DebugTarget::Sh2Master};
     uint32_t r[16]{};
     uint32_t pc{};
     uint32_t pr{};
@@ -47,7 +47,7 @@ struct RegsReadResult {
 };
 
 struct MemPeekResult {
-    DebugTarget target;
+    DebugTarget target{DebugTarget::Sh2Master};
     uint32_t address{};
     std::vector<uint8_t> data;
 };
@@ -60,36 +60,36 @@ struct DisasmLine {
 };
 
 struct DisasmAtResult {
-    DebugTarget target;
+    DebugTarget target{DebugTarget::Sh2Master};
     std::vector<DisasmLine> instructions;
 };
 
 struct BreakpointInfo {
     std::string breakpoint_id;
-    DebugTarget target;
-    uint32_t address;
+    DebugTarget target{DebugTarget::Sh2Master};
+    uint32_t address{};
     std::optional<std::string> label;
-    bool enabled;
+    bool enabled{};
 };
 
 struct BreakpointSetResult {
     std::string breakpoint_id;
-    DebugTarget target;
-    uint32_t address;
+    DebugTarget target{DebugTarget::Sh2Master};
+    uint32_t address{};
 };
 
 struct BreakpointListResult {
     std::vector<BreakpointInfo> breakpoints;
-    uint32_t total_count;
+    uint32_t total_count{};
 };
 
 struct ExecStepIResult {
-    StopReason reason;
-    DebugTarget target;
-    uint32_t pc_before;
-    uint32_t pc_after;
-    uint32_t cycles_advanced;
-    bool counterpart_advanced;
+    StopReason reason{StopReason::Step};
+    DebugTarget target{DebugTarget::Sh2Master};
+    uint32_t pc_before{};
+    uint32_t pc_after{};
+    uint32_t cycles_advanced{};
+    bool counterpart_advanced{};
     std::optional<std::string> breakpoint_id;
 };
 
@@ -97,9 +97,6 @@ using DebugResultPayload =
     std::variant<std::monostate, DebugVersionResult, InstanceStatusResult, RegsReadResult, MemPeekResult,
                  DisasmAtResult, BreakpointSetResult, BreakpointListResult, ExecStepIResult>;
 
-struct DebugResult {
-    DebugResultPayload payload;
-    std::optional<ErrorInfo> error;
-};
+using DebugResult = std::variant<DebugResultPayload, ErrorInfo>;
 
 } // namespace ymir::debug

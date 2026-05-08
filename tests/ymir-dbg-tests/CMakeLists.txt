@@ -1,5 +1,6 @@
 add_executable(ymir-dbg-tests
     src/smoke_tests.cpp
+    src/protocol_tests.cpp
 )
 add_executable(ymir::ymir-dbg-tests ALIAS ymir-dbg-tests)
 set_target_properties(ymir-dbg-tests PROPERTIES
@@ -8,8 +9,16 @@ set_target_properties(ymir-dbg-tests PROPERTIES
 target_compile_features(ymir-dbg-tests PUBLIC cxx_std_20)
 
 find_package(Catch2 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
-target_link_libraries(ymir-dbg-tests PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(ymir-dbg-tests PRIVATE
+    Catch2::Catch2WithMain
+    nlohmann_json::nlohmann_json
+    ymir::ymir-headless-proto
+)
+target_include_directories(ymir-dbg-tests PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../apps/ymir-dbg/src>"
+)
 
 cmrk_copy_runtime_dlls(ymir-dbg-tests)
 

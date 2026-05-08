@@ -51,17 +51,17 @@ constexpr std::string_view ToString(CommandMethod m) {
 // -- Command parameter structs ------------------------------------------------
 
 struct RegsReadParams {
-    DebugTarget target{};
+    DebugTarget target{DebugTarget::Sh2Master};
 };
 
 struct MemPeekParams {
-    DebugTarget target{};
+    DebugTarget target{DebugTarget::Sh2Master};
     uint32_t address{0};
     uint32_t count{0};
 };
 
 struct DisasmAtParams {
-    DebugTarget target{};
+    DebugTarget target{DebugTarget::Sh2Master};
     uint32_t address{0};
     uint32_t count{0};
 };
@@ -82,7 +82,7 @@ struct BreakpointIdParams {
 };
 
 struct ExecStepIParams {
-    DebugTarget target{};
+    DebugTarget target{DebugTarget::Sh2Master};
 };
 
 using DebugCommandParams = std::variant<std::monostate, RegsReadParams, MemPeekParams, DisasmAtParams,
