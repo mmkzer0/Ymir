@@ -14,13 +14,12 @@ target_compile_features(ymir-dbg PUBLIC cxx_std_20)
 
 find_package(cxxopts CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
 
 target_link_libraries(ymir-dbg PRIVATE
     ymir::ymir-headless-proto
+    ymir::ymir-dbg-framing
     cxxopts::cxxopts
     fmt::fmt
-    nlohmann_json::nlohmann_json
 )
 
 cmrk_copy_runtime_dlls(ymir-dbg)

@@ -13,12 +13,12 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 target_link_libraries(ymir-headless-tests PRIVATE
     Catch2::Catch2WithMain
-    nlohmann_json::nlohmann_json
     ymir::ymir-headless-proto
+    ymir::ymir-headless-framing
 )
-target_include_directories(ymir-headless-tests PRIVATE
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../apps/ymir-headless/src>"
-)
+# Note: nlohmann_json is provided transitively by ymir-headless-framing.
+# The direct find_package above is kept for the test files that use
+# nlohmann::json directly (e.g., json_rpc_adapter tests).
 
 cmrk_copy_runtime_dlls(ymir-headless-tests)
 
