@@ -74,6 +74,7 @@ public:
     }
 
     static std::optional<JsonRpcRequest> ParseRequest(std::string_view line, nlohmann::json &outError) {
+        outError = nullptr;
         try {
             auto j = nlohmann::json::parse(line);
 

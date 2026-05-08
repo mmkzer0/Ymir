@@ -326,6 +326,17 @@ TEST_CASE("JsonRpcAdapter parses requests", "[protocol]") {
     }
 }
 
+TEST_CASE("JsonRpcAdapter clears outError on success", "[protocol]") {
+    nlohmann::json error;
+    error = ymir::debug::JsonRpcAdapter::CreateErrorResponse(std::monostate{}, ymir::debug::JsonRpcError::ParseError,
+                                                             "prior failure");
+
+    std::string line = R"({"jsonrpc": "2.0", "method": "debug.version", "id": 1})";
+    auto req = ymir::debug::JsonRpcAdapter::ParseRequest(line, error);
+    REQUIRE(req.has_value());
+    CHECK(error.is_null());
+}
+
 TEST_CASE("JsonRpcAdapter creates method-not-found errors", "[protocol]") {
     const auto error = ymir::debug::JsonRpcAdapter::CreateMethodNotFoundResponse(ymir::debug::JsonRpcId{int64_t{42}},
                                                                                  "unknown.method");

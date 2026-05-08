@@ -60,6 +60,17 @@ TEST_CASE("ymir-dbg JsonRpcAdapter preserves request IDs", "[protocol]") {
     CHECK(std::get<std::string>(stringRequest->id) == "req-7");
 }
 
+TEST_CASE("ymir-dbg JsonRpcAdapter clears outError on success", "[protocol]") {
+    nlohmann::json error;
+    error = ymir::debug::JsonRpcAdapter::CreateErrorResponse(std::monostate{}, ymir::debug::JsonRpcError::ParseError,
+                                                             "prior failure");
+
+    auto request =
+        ymir::debug::JsonRpcAdapter::ParseRequest(R"({"jsonrpc":"2.0","method":"debug.version","id":1})", error);
+    REQUIRE(request.has_value());
+    CHECK(error.is_null());
+}
+
 TEST_CASE("ymir-dbg JsonRpcAdapter handles malformed and unsupported input", "[protocol]") {
     nlohmann::json error;
 
