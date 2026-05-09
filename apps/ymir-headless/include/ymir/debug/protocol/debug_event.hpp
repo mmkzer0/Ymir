@@ -29,7 +29,7 @@ struct InstanceReadyEvent {
     std::string protocol_version;
     std::string transport;
     std::string instance_id;
-    ExecutionState state;
+    ExecutionState state{ExecutionState::Starting};
     std::vector<std::string> capabilities;
     std::vector<TargetInfo> targets;
 };

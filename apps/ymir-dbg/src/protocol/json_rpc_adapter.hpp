@@ -93,11 +93,19 @@ public:
             JsonRpcId earlyId = std::monostate{};
             if (j.contains("id")) {
                 if (j["id"].is_number_integer()) {
-                    earlyId = j["id"].get<int64_t>();
+                    if (j["id"].is_number_unsigned()) {
+                        uint64_t uval = j["id"].get<uint64_t>();
+                        if (uval <= static_cast<uint64_t>(INT64_MAX)) {
+                            earlyId = static_cast<int64_t>(uval);
+                        }
+                        // else: out of int64_t range — earlyId stays monostate (null in response)
+                    } else {
+                        earlyId = j["id"].get<int64_t>();
+                    }
                 } else if (j["id"].is_string()) {
                     earlyId = j["id"].get<std::string>();
                 }
-                // null or unrecognised id type: earlyId stays monostate (null in response)
+                // null or unrecognised type: earlyId stays monostate (null in response)
             }
 
             if (!j.contains("jsonrpc") || !j["jsonrpc"].is_string() || j["jsonrpc"].get<std::string>() != "2.0") {
@@ -127,7 +135,16 @@ public:
 
             if (j.contains("id")) {
                 if (j["id"].is_number_integer()) {
-                    req.id = j["id"].get<int64_t>();
+                    if (j["id"].is_number_unsigned()) {
+                        uint64_t uval = j["id"].get<uint64_t>();
+                        if (uval > static_cast<uint64_t>(INT64_MAX)) {
+                            outError = CreateErrorResponse(earlyId, JsonRpcError::InvalidRequest, "Invalid id type");
+                            return std::nullopt;
+                        }
+                        req.id = static_cast<int64_t>(uval);
+                    } else {
+                        req.id = j["id"].get<int64_t>();
+                    }
                 } else if (j["id"].is_string()) {
                     req.id = j["id"].get<std::string>();
                 } else if (j["id"].is_null()) {

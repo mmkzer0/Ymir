@@ -10,7 +10,9 @@
 #include <protocol/json_rpc_adapter.hpp>
 #include <protocol/line_framer.hpp>
 
+#include <cstddef>
 #include <cstring>
+#include <new>
 #include <variant>
 
 TEST_CASE("Protocol version constants", "[protocol]") {
@@ -397,6 +399,42 @@ TEST_CASE("JsonRpcAdapter clears outError on success", "[protocol]") {
     auto req = ymir::debug::JsonRpcAdapter::ParseRequest(line, error);
     REQUIRE(req.has_value());
     CHECK(error.is_null());
+}
+
+TEST_CASE("JsonRpcAdapter rejects out-of-range unsigned id as InvalidRequest", "[protocol]") {
+    nlohmann::json error;
+    // 2^64-1 exceeds int64_t range; nlohmann stores as uint64_t, is_number_unsigned() catches it
+    std::string line = R"({"jsonrpc": "2.0", "method": "debug.version", "id": 18446744073709551615})";
+    auto req = ymir::debug::JsonRpcAdapter::ParseRequest(line, error);
+    CHECK_FALSE(req.has_value());
+    CHECK(error["error"]["code"] == static_cast<int>(ymir::debug::JsonRpcError::InvalidRequest));
+}
+
+// Nit #3: InstanceStatusResult::state and slave_enabled lack in-class initializers.
+// Without them, default-constructing the struct leaves those fields indeterminate (UB).
+// Placement new over a 0xFF-filled buffer makes the absence of initializers observable.
+TEST_CASE("InstanceStatusResult default-initializes state and slave_enabled", "[protocol]") {
+    alignas(ymir::debug::InstanceStatusResult) std::byte buf[sizeof(ymir::debug::InstanceStatusResult)];
+    std::memset(buf, 0xFF, sizeof(buf));
+    auto *status = ::new (buf) ymir::debug::InstanceStatusResult;
+
+    // Expected: Starting (0) and false. Without in-class initializers: 0xFF garbage.
+    CHECK(status->state == ymir::debug::ExecutionState::Starting);
+    CHECK_FALSE(status->slave_enabled);
+
+    status->~InstanceStatusResult();
+}
+
+// Nit #4: InstanceReadyEvent::state lacks an in-class initializer; same exposure method.
+TEST_CASE("InstanceReadyEvent default-initializes state", "[protocol]") {
+    alignas(ymir::debug::InstanceReadyEvent) std::byte buf[sizeof(ymir::debug::InstanceReadyEvent)];
+    std::memset(buf, 0xFF, sizeof(buf));
+    auto *ready = ::new (buf) ymir::debug::InstanceReadyEvent;
+
+    // Expected: Starting (0). Without in-class initializer: 0xFF garbage.
+    CHECK(ready->state == ymir::debug::ExecutionState::Starting);
+
+    ready->~InstanceReadyEvent();
 }
 
 TEST_CASE("JsonRpcAdapter creates method-not-found errors", "[protocol]") {

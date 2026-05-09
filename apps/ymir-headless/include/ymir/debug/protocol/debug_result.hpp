@@ -27,8 +27,8 @@ struct DebugVersionResult {
 struct InstanceStatusResult {
     std::string protocol;
     std::string instance_id;
-    ExecutionState state;
-    bool slave_enabled;
+    ExecutionState state{ExecutionState::Starting};
+    bool slave_enabled{false};
     std::vector<std::string> capabilities;
 };
 
