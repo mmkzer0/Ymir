@@ -20,6 +20,7 @@ find_package(fmt CONFIG REQUIRED)
 ## Add dependencies
 target_link_libraries(ymir-headless PRIVATE
     ymir::ymir-core
+    ymir::ymir-headless-proto
     fmt::fmt
 )
 

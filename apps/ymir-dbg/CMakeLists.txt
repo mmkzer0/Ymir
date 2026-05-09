@@ -16,6 +16,8 @@ find_package(cxxopts CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
 target_link_libraries(ymir-dbg PRIVATE
+    ymir::ymir-headless-proto
+    ymir::ymir-dbg-framing
     cxxopts::cxxopts
     fmt::fmt
 )
