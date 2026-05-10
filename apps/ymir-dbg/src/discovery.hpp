@@ -1,12 +1,12 @@
 #pragma once
 
 #include <fmt/format.h>
-#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 
+#include <ymir/debug/util/env.hpp>
 #include <ymir/debug/util/path.hpp>
 
 #ifdef __APPLE__
@@ -55,8 +55,8 @@ inline std::optional<std::filesystem::path> find_headless_binary(std::string_vie
     // Level 2: YMIR_HEADLESS environment variable
     // Unlike Level 1, a set-but-wrong path falls through to Level 3/4 rather
     // than failing fast — the var may be a stale leftover from another install.
-    if (const char *env = std::getenv("YMIR_HEADLESS")) {
-        fs::path p(env);
+    if (auto env = ymir::debug::util::EnvGet("YMIR_HEADLESS")) {
+        fs::path p(*env);
         if (fs::exists(p) && fs::is_regular_file(p)) {
             fmt::print(stderr, "[ymir-dbg] found headless via YMIR_HEADLESS: {}\n", p.string());
             return p;
@@ -67,9 +67,9 @@ inline std::optional<std::filesystem::path> find_headless_binary(std::string_vie
     // Dev-only convenience — a symlink from the build output to ~/bin is the
     // intended workflow. Could collide with a same-named binary on a compromised
     // PATH, but that is not a concern on typical dev machines.
-    if (const char *pathEnv = std::getenv("PATH")) {
+    if (auto pathEnv = ymir::debug::util::EnvGet("PATH")) {
         // Use our cross-platform utility to correctly handle colons (POSIX) or semicolons (Windows)
-        auto segments = ymir::debug::util::SplitSearchPath(pathEnv);
+        auto segments = ymir::debug::util::SplitSearchPath(*pathEnv);
         for (const auto& dir : segments) {
             fs::path candidate = fs::path(dir) / kBinaryName;
             if (fs::exists(candidate) && fs::is_regular_file(candidate)) {

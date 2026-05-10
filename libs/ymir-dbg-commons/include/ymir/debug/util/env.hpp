@@ -2,8 +2,41 @@
 
 #include <string>
 #include <cstdlib>
+#include <optional>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace ymir::debug::util {
+
+/// @brief Gets an environment variable safely across platforms.
+/// @param name The name of the environment variable.
+/// @return The value of the environment variable, or std::nullopt if not set.
+inline std::optional<std::string> EnvGet(const std::string& name) {
+#ifdef _WIN32
+    DWORD size = GetEnvironmentVariableA(name.c_str(), nullptr, 0);
+    if (size == 0) {
+        if (GetLastError() == ERROR_ENVVAR_NOT_FOUND) {
+            return std::nullopt;
+        }
+        return std::string{""};
+    }
+    std::string value(size, '\0');
+    // size includes null terminator, but string handles its own
+    GetEnvironmentVariableA(name.c_str(), value.data(), size);
+    value.pop_back(); // Remove the null terminator added by GetEnvironmentVariableA
+    return value;
+#else
+    if (const char* value = std::getenv(name.c_str())) {
+        return std::string{value};
+    }
+    return std::nullopt;
+#endif
+}
 
 /// @brief Sets an environment variable safely across platforms.
 /// @param name The name of the environment variable.
