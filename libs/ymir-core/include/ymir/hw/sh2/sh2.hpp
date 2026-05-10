@@ -987,6 +987,9 @@ private:
     // For watchpoints, we reserve one byte per address in the address space.
     ChunkedMemory<32, 19> m_watchpoints;
 
+    // TODO: util::VirtualMemory may fail to allocate large chunks of memory if there's not enough free RAM on the
+    // system. Figure out a way to use it again but allocate memory dynamically.
+
     // These help track what breakpoints and watchpoints are set for fast clears.
     std::set<uint32> m_breakpointSet;
     std::map<uint32, debug::WatchpointFlags> m_watchpointSet;

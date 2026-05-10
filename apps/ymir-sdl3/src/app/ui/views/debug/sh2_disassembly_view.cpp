@@ -124,7 +124,7 @@ void SH2DisassemblyView::Display() {
             io.WantCaptureMouse = true;
         }
 
-        const uint32 lines = availArea.y / (lineHeight + itemSpacing) + 1;
+        const uint32 lines = std::max(availArea.y, 0.0f) / (lineHeight + itemSpacing) + 1;
         // TODO: branch arrows
 
         auto toggleSetBreakpoint = [&](uint32 address) {

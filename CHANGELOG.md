@@ -9,6 +9,7 @@ Uses save state file version 12.
 ### New features and improvements
 
 - App: Rotate screenshots based on selected display rotation.
+- Debug: Avoid infinite loop when SH2 debugger window is collapsed. Fixes UI hang when (re)opening the window once it was collapsed. (#690)
 - SCU: Optimize DSP operations involving 48-bit registers.
 
 ### Fixes
