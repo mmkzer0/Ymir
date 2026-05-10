@@ -1481,11 +1481,12 @@ void SoftwareVDPRenderer::VDP1Cmd_DrawNormalSprite(uint32 cmdAddress, VDP1Comman
     const sint32 yb = ya + std::max(charSizeV, 1u) - 1u; // bottom Y
 
     const sint32 doubleV = m_VDP1doubleV;
+    const sint32 yAdd = deinterlace ? doubleV : 0;
 
     const CoordS32 coordA{xa, ya << doubleV};
     const CoordS32 coordB{xb, ya << doubleV};
-    const CoordS32 coordC{xb, yb << doubleV};
-    const CoordS32 coordD{xa, yb << doubleV};
+    const CoordS32 coordC{xb, (yb << doubleV) + yAdd};
+    const CoordS32 coordD{xa, (yb << doubleV) + yAdd};
 
     devlog::trace<grp::swvdp1_cmd>("[{:05X}] Draw normal sprite: {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d}",
                                    cmdAddress, xa, ya, xb, ya, xb, yb, xa, yb);
@@ -1580,11 +1581,12 @@ void SoftwareVDPRenderer::VDP1Cmd_DrawScaledSprite(uint32 cmdAddress, VDP1Comman
     qyd += ctx.localCoordY;
 
     const sint32 doubleV = m_VDP1doubleV;
+    const sint32 yAdd = deinterlace ? doubleV : 0;
 
     const CoordS32 coordA{qxa, qya << doubleV};
     const CoordS32 coordB{qxb, qyb << doubleV};
-    const CoordS32 coordC{qxc, qyc << doubleV};
-    const CoordS32 coordD{qxd, qyd << doubleV};
+    const CoordS32 coordC{qxc, (qyc << doubleV) + yAdd};
+    const CoordS32 coordD{qxd, (qyd << doubleV) + yAdd};
 
     devlog::trace<grp::swvdp1_cmd>("[{:05X}] Draw scaled sprite: {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d} {:3d}x{:<3d}",
                                    cmdAddress, qxa, qya, qxb, qyb, qxc, qyc, qxd, qyd);
