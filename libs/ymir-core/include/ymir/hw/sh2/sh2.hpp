@@ -59,8 +59,8 @@ public:
     void UseDebugBreakManager(debug::DebugBreakManager *mgr) {
         m_debugBreakMgr = mgr;
         if (mgr != nullptr) {
-            m_breakpoints.Allocate(kBreakpointMapSize);
-            m_watchpoints.Allocate(kWatchpointMapSize);
+            m_breakpoints.Allocate();
+            m_watchpoints.Allocate();
             ReapplyBreakpoints();
             ReapplyWatchpoints();
         } else {
@@ -129,14 +129,16 @@ public:
 private:
     // Returns a reference to the portion of the breakpoint bitmap containing the given address.
     FORCE_INLINE uint64 &BreakpointBitmapChunkRef(uint32 address) {
-        address >>= 7u; // 1 bit for halfword alignment, 6 bits for 64-bit addressing
-        return static_cast<uint64 *>(m_breakpoints.GetMemory())[address];
+        address >>= 4u; // 1 bit for halfword alignment, 3 bits for 8 bits packed in a byte
+        address &= ~(sizeof(uint64) - 1);
+        return *m_breakpoints.GetPointer<uint64>(address);
     }
 
     // Returns the portion of the breakpoint bitmap containing the given address.
     FORCE_INLINE uint64 GetBreakpointBitmapChunk(uint32 address) const {
-        address >>= 7u; // 1 bit for halfword alignment, 6 bits for 64-bit addressing
-        return static_cast<uint64 *>(m_breakpoints.GetMemory())[address];
+        address >>= 4u; // 1 bit for halfword alignment, 3 bits for 8 bits packed in a byte
+        address &= ~(sizeof(uint64) - 1);
+        return *m_breakpoints.GetPointer<uint64>(address);
     }
 
     // Builds a value containing the breakpoint bitmap bit for the given address.
@@ -235,12 +237,12 @@ private:
 private:
     // Returns a reference to the watchpoint flags for the given address.
     FORCE_INLINE debug::WatchpointFlags &WatchpointFlagsRef(uint32 address) {
-        return static_cast<debug::WatchpointFlags *>(m_watchpoints.GetMemory())[address];
+        return *m_watchpoints.GetPointer<debug::WatchpointFlags>(address);
     }
 
     // Returns the the watchpoint flags for the given address.
     FORCE_INLINE debug::WatchpointFlags GetWatchpointFlags(uint32 address) const {
-        return static_cast<debug::WatchpointFlags *>(m_watchpoints.GetMemory())[address];
+        return *m_watchpoints.GetPointer<debug::WatchpointFlags>(address);
     }
 
 public:
@@ -925,8 +927,65 @@ private:
     static constexpr size_t kBreakpointMapSize = kAddressSpaceSize / kInstructionSize / kBitsPerByte;
     static constexpr size_t kWatchpointMapSize = kAddressSpaceSize; // only 6 bits per byte are used
 
-    util::VirtualMemory m_breakpoints;
-    util::VirtualMemory m_watchpoints;
+    template <size_t sizeBits, size_t chunkSizeBits>
+    struct ChunkedMemory {
+        static_assert(chunkSizeBits <= sizeBits, "chunk size must not exceed memory chunk size");
+
+        static constexpr size_t kSize = static_cast<size_t>(1) << sizeBits;
+        static constexpr size_t kChunkSize = static_cast<size_t>(1) << chunkSizeBits;
+        static constexpr size_t kChunkMask = kChunkSize - 1;
+        static constexpr size_t kNumChunks = kSize / kChunkSize;
+
+        using Chunk = std::array<uint8, kChunkSize>;
+
+        // Retrieves a pointer to the specified object in memory.
+        // The address is force-aligned to sizeof(T).
+        template <typename T>
+        T *GetPointer(size_t address) {
+            static_assert(bit::is_power_of_two(sizeof(T)));
+            const size_t chunkIndex = address >> chunkSizeBits;
+            if (!m_chunks[chunkIndex]) {
+                m_chunks[chunkIndex] = std::make_unique<Chunk>();
+            }
+            return reinterpret_cast<T *>(&(*m_chunks[chunkIndex])[address & kChunkMask]);
+        }
+
+        template <typename T>
+        const T *GetPointer(size_t address) const {
+            return const_cast<ChunkedMemory *>(this)->GetPointer<T>(address);
+        }
+
+        void Allocate() {
+            m_allocated = true;
+        }
+
+        void Free() {
+            for (auto &ptr : m_chunks) {
+                ptr.reset();
+            }
+            m_allocated = false;
+        }
+
+        bool IsAllocated() const {
+            return m_allocated;
+        }
+
+    private:
+        std::array<std::unique_ptr<Chunk>, kNumChunks> m_chunks;
+
+        bool m_allocated = false;
+    };
+
+    // Address space size has 32 bits.
+    // Instruction size is 2 bits.
+    // A byte has 8 bits.
+    // The breakpoint map needs one bit per instruction address, so:
+    //   4 GB / 2 (instructions at word-aligned addresses) / 8 (packing 8 bits in one byte)
+    //   32 - 1 - 3
+    ChunkedMemory<32 - 1 - 3, 16> m_breakpoints;
+
+    // For watchpoints, we reserve one byte per address in the address space.
+    ChunkedMemory<32, 19> m_watchpoints;
 
     // These help track what breakpoints and watchpoints are set for fast clears.
     std::set<uint32> m_breakpointSet;
