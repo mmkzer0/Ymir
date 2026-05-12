@@ -19,6 +19,7 @@ Uses save state file version 12.
 - Media: Ensure a valid Saturn disc is loaded before trying to parse the filesystem. Fixes crashes when trying to load non-Saturn discs.
 - Rewind: Fix crash when attempting to rewind to the very first frame. (#857)
 - VDP1: Add one-pixel offset to vertical coordinates of axis-aligned sprites when rendering high-resolution modes with deinterlacing enabled. Fixes gaps in Sonic Jam and Astra Superstars. (#784, #853)
+- VDP1: Add one-pixel offset to vertical coordinates of clipping coordinates. Fixes one-pixel gap at the bottom of the screen in Sonic Jam. (#853)
 
 
 ## Version 0.3.1

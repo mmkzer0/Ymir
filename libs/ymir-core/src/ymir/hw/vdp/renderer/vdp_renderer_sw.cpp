@@ -930,7 +930,8 @@ FORCE_INLINE bool SoftwareVDPRenderer::VDP1IsPixelUserClipped(CoordS32 coord) co
     if (x < ctx.userClipX0 || x > ctx.userClipX1) {
         return true;
     }
-    if (y < (ctx.userClipY0 << m_VDP1doubleV) || y > (ctx.userClipY1 << m_VDP1doubleV)) {
+    if (y < ((ctx.userClipY0 << m_VDP1doubleV) | m_VDP1doubleV) ||
+        y > ((ctx.userClipY1 << m_VDP1doubleV) | m_VDP1doubleV)) {
         return true;
     }
     return false;
@@ -943,7 +944,7 @@ FORCE_INLINE bool SoftwareVDPRenderer::VDP1IsPixelSystemClipped(CoordS32 coord) 
     if (x < 0 || x > ctx.sysClipH) {
         return true;
     }
-    if (y < 0 || y > (ctx.sysClipV << m_VDP1doubleV)) {
+    if (y < 0 || y > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV)) {
         return true;
     }
     return false;
@@ -963,7 +964,8 @@ FORCE_INLINE bool SoftwareVDPRenderer::VDP1IsLineSystemClipped(CoordS32 coord1, 
     if (x1 > ctx.sysClipH && x2 > ctx.sysClipH) {
         return true;
     }
-    if (y1 > (ctx.sysClipV << m_VDP1doubleV) && y2 > (ctx.sysClipV << m_VDP1doubleV)) {
+    if (y1 > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV) &&
+        y2 > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV)) {
         return true;
     }
     return false;
@@ -986,8 +988,10 @@ bool SoftwareVDPRenderer::VDP1IsQuadSystemClipped(CoordS32 coord1, CoordS32 coor
     if (x1 > ctx.sysClipH && x2 > ctx.sysClipH && x3 > ctx.sysClipH && x4 > ctx.sysClipH) {
         return true;
     }
-    if (y1 > (ctx.sysClipV << m_VDP1doubleV) && y2 > (ctx.sysClipV << m_VDP1doubleV) &&
-        y3 > (ctx.sysClipV << m_VDP1doubleV) && y4 > (ctx.sysClipV << m_VDP1doubleV)) {
+    if (y1 > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV) &&
+        y2 > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV) &&
+        y3 > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV) &&
+        y4 > ((ctx.sysClipV << m_VDP1doubleV) | m_VDP1doubleV)) {
         return true;
     }
     return false;
